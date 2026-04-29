@@ -128,4 +128,4 @@ class TestingSuiteApp:
 if __name__ == "__main__":
     root = tk.Tk()
     app = TestingSuiteApp(root)
-    root.mainloop()      
+    root.mainloop()      #  uruchomienie pętli głównej aplikacji
