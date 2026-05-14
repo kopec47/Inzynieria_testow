@@ -84,7 +84,7 @@ class TestingSuiteApp:
 
 
     def plot_data(self):
-        if self.df is not None:
+        if hasattr(self, "df") and self.df is not None:
             self.ax.clear()
             self.ax.set_xlabel("Time")
             self.ax.set_ylabel("Amplitude")
@@ -103,7 +103,7 @@ class TestingSuiteApp:
             self.canvas.draw()
 
     def calculate_statistics(self):
-        if self.df is not None:
+        if hasattr(self, "df") and self.df is not None:
             x = self.df["time"].values
             y = self.df["value"].values
 
