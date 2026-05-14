@@ -38,7 +38,17 @@ class MainApp:
         self.ent_max = ttk.Entry(side)
         self.ent_max.insert(0, "4.0")
         self.ent_max.pack()
-        
+
+        ttk.Label(side, text="Częstotliwość [Hz]:").pack()
+        self.ent_freq = ttk.Entry(side)
+        self.ent_freq.insert(0, "100")
+        self.ent_freq.pack()
+
+        ttk.Label(side, text="Długosc pomiaru [s]:").pack()
+        self.ent_duration = ttk.Entry(side)
+        self.ent_duration.insert(0, "5")
+        self.ent_duration.pack()
+
         self.lbl_status = tk.Label(side, text="STATUS: OK", bg="gray", width=15)
         self.lbl_status.pack(pady=10)
 
@@ -92,12 +102,22 @@ class MainApp:
             self.current_measure_data = []
             self.is_measuring = True
             self.btn_meas.config(text="STOP POMIARU")
+            duration = float(self.ent_duration.get())
+            self.root.after(int(duration * 1000), self.toggle_meas)
         else:
-            self.is_measuring = False
-            self.btn_meas.config(text="START POMIARU")
-            self.save_data()
-            if self.auto_mode.get():
-                self.root.after(3000, self.toggle_meas)
+            self._stop_meas()
+
+    def _auto_stop_meas(self):
+        if self.is_measuring:
+            self.toggle_meas()
+
+    def _stop_meas(self):
+        self.is_measuring = False
+        self.btn_meas.config(text="START POMIARU")
+        self.save_data()
+        if self.auto_mode.get():
+            self.root.after(3000, self.toggle_meas)
+
 
     def save_data(self):
         fname = f"data_{datetime.datetime.now().strftime('%H%M%S')}.csv"

@@ -25,6 +25,8 @@ class AnalogGeneration:
 
     def stop(self):
         self.is_running = False
+        if self.thread is not None:
+            self.thread.join()
 
     def _generation_loop(self):
         t0 = time.time()
