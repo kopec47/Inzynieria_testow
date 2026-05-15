@@ -10,8 +10,10 @@ class TestingSuiteApp:
         self.root = root
         self.root.title("Modul 3 - podstawy gui w systemie testowym")
         self.root.geometry("1000x700")
-
-        self.data = None #tu beda przechowywane dane
+        
+        self.df = None #tu bedzie przechowywany DataFrame z danymi
+        self.a = None #tu bedzie przechowywany współczynnik a
+        self.b = None #tu bedzie przechowywany współczynnik b
 
         self.setup_gui()
 
@@ -44,27 +46,28 @@ class TestingSuiteApp:
         mid_frame = tk.Frame(self.root)
         mid_frame.pack(side = tk.TOP, fill=tk.BOTH, expand=True, padx=10, pady=5)
 
-
-        self.fig, self.ax = plt.subplots(figsize=(6, 5))
-        self.canvas = FigureCanvasTkAgg(self.fig, master=mid_frame)
-        self.canvas.get_tk_widget().pack(side=tk.LEFT, fill=tk.BOTH, expand=True)   
-
         table_frame = tk.Frame(mid_frame)
-        table_frame.pack(side=tk.RIGHT, fill=tk.Y, padx = 5)
+        table_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=5)
 
         tk.Label(table_frame, text = "data").pack()
 
-        self.tree = ttk.Treeview(table_frame, columns=("time", "value"), show="headings")
+        self.tree = ttk.Treeview(table_frame, columns=("time", "value"), show="headings", height =20)
         self.tree.heading("time", text="Time")
         self.tree.heading("value", text="Amplitude")
-        self.tree.column("time", width=80)
-        self.tree.column("value", width=80)
+
+        self.tree.column("time", width=100)
+        self.tree.column("value", width=100)
 
         scroollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scroollbar.set)
 
-        self.tree.pack(side=tk.LEFT, fill=tk.Y)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scroollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        self.fig, self.ax = plt.subplots(figsize=(6, 5))
+        self.canvas = FigureCanvasTkAgg(self.fig, master=mid_frame)
+        self.canvas.get_tk_widget().pack(side=tk.LEFT, fill=tk.BOTH, expand=True)   
+
 
     def load_data(self):
         file_path = filedialog.askopenfilename(filetypes=[("CSV files", "*.csv")])
@@ -99,6 +102,12 @@ class TestingSuiteApp:
                 self.ax.set_yscale("log")
             else:
                 self.ax.set_yscale("linear")
+
+            if self.a is not None and self.b is not None:
+                x_vals = self.df["time"].values
+                y_pred = self.a * x_vals + self.b
+                self.ax.plot(x_vals, y_pred, color="red", label=f'Fit: {self.a:.2f}x + {self.b:.2f}')
+                self.ax.legend()
             
             self.canvas.draw()
 
@@ -107,19 +116,16 @@ class TestingSuiteApp:
             x = self.df["time"].values
             y = self.df["value"].values
 
-            a, b = np.polyfit(x, y, 1)
+            self.a, self.b = np.polyfit(x, y, 1)
 
             self.entry_a.delete(0, tk.END)
-            self.entry_a.insert(0, f"{a:.4f}")
+            self.entry_a.insert(0, f"{self.a:.4f}")
 
             self.entry_b.delete(0, tk.END)
-            self.entry_b.insert(0, f"{b:.4f}")
+            self.entry_b.insert(0, f"{self.b:.4f}")
 
             self.plot_data()
-            y_pred = a * x + b
-            self.ax.plot(x, y_pred, color="red", label=f'Fit: {a:.2f}x + {b:.2f}')
-            self.ax.legend()
-            self.canvas.draw()
+            
 
         else:
             messagebox.showwarning("Brak danych", "Najpierw załaduj dane")
