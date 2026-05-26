@@ -1,26 +1,31 @@
+import csv
+import datetime
+from collections import deque
+from pathlib import Path
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, ttk
+
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from collections import deque
-import datetime
-import csv
 
 from daq_acquisition import AnalogAcquisition
 from daq_generation import AnalogGeneration
 
+
 class MainApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("System Testowy DAQ - Moduł 4")
-        
+        self.root.title("System testowy DAQ")
+
         self.daq = AnalogAcquisition()
         self.gen = AnalogGeneration()
-        
+
         self.is_measuring = False
         self.auto_mode = tk.BooleanVar(value=False)
-        self.plot_data = deque(maxlen=100)
+        self.plot_data = deque(maxlen=500)
         self.current_measure_data = []
+        self.measure_stop_job = None
+        self.auto_start_job = None
 
         self._setup_ui()
         self.update_gui()
@@ -29,122 +34,261 @@ class MainApp:
         side = ttk.Frame(self.root, padding=10)
         side.pack(side=tk.LEFT, fill=tk.Y)
 
-        ttk.Label(side, text="Limit MIN [V]:").pack()
+        ttk.Label(side, text="Limit MIN [V]:").pack(anchor=tk.W)
         self.ent_min = ttk.Entry(side)
         self.ent_min.insert(0, "-4.0")
-        self.ent_min.pack()
-        
-        ttk.Label(side, text="Limit MAX [V]:").pack()
+        self.ent_min.pack(fill=tk.X)
+
+        ttk.Label(side, text="Limit MAX [V]:").pack(anchor=tk.W)
         self.ent_max = ttk.Entry(side)
         self.ent_max.insert(0, "4.0")
-        self.ent_max.pack()
+        self.ent_max.pack(fill=tk.X)
 
-        ttk.Label(side, text="Częstotliwość [Hz]:").pack()
+        ttk.Label(side, text="Zakres AI MIN [V]:").pack(anchor=tk.W)
+        self.ent_range_min = ttk.Entry(side)
+        self.ent_range_min.insert(0, "-10.0")
+        self.ent_range_min.pack(fill=tk.X)
+
+        ttk.Label(side, text="Zakres AI MAX [V]:").pack(anchor=tk.W)
+        self.ent_range_max = ttk.Entry(side)
+        self.ent_range_max.insert(0, "10.0")
+        self.ent_range_max.pack(fill=tk.X)
+
+        ttk.Label(side, text="Czestotliwosc [Hz]:").pack(anchor=tk.W)
         self.ent_freq = ttk.Entry(side)
         self.ent_freq.insert(0, "100")
-        self.ent_freq.pack()
+        self.ent_freq.pack(fill=tk.X)
 
-        ttk.Label(side, text="Długosc pomiaru [s]:").pack()
+        ttk.Label(side, text="Dlugosc pomiaru [s]:").pack(anchor=tk.W)
         self.ent_duration = ttk.Entry(side)
         self.ent_duration.insert(0, "5")
-        self.ent_duration.pack()
+        self.ent_duration.pack(fill=tk.X)
 
-        self.lbl_status = tk.Label(side, text="STATUS: OK", bg="gray", width=15)
-        self.lbl_status.pack(pady=10)
+        self.lbl_status = tk.Label(side, text="STATUS: STOP", bg="gray", fg="white", width=22)
+        self.lbl_status.pack(pady=8, fill=tk.X)
+        self.lbl_ai = ttk.Label(side, text="AI: -- V")
+        self.lbl_ai.pack(anchor=tk.W)
+        self.lbl_di = ttk.Label(side, text="DI: --")
+        self.lbl_di.pack(anchor=tk.W)
+        self.lbl_auto = ttk.Label(side, text="Tryb: reczny")
+        self.lbl_auto.pack(anchor=tk.W, pady=(0, 8))
 
         self.btn_start_daq = ttk.Button(side, text="START AKWIZYCJI", command=self.handle_start_daq)
         self.btn_start_daq.pack(fill=tk.X)
-        
         self.btn_stop_daq = ttk.Button(side, text="STOP AKWIZYCJI", command=self.handle_stop_daq, state=tk.DISABLED)
         self.btn_stop_daq.pack(fill=tk.X, pady=2)
 
         self.btn_meas = ttk.Button(side, text="START POMIARU", command=self.toggle_meas, state=tk.DISABLED)
         self.btn_meas.pack(fill=tk.X, pady=5)
-        
-        ttk.Checkbutton(side, text="Tryb Automatyczny", variable=self.auto_mode).pack()
+        ttk.Checkbutton(side, text="Tryb automatyczny", variable=self.auto_mode).pack(anchor=tk.W)
 
-        ttk.Label(side, text="\nGeneracja AO:").pack()
-        self.combo_gen = ttk.Combobox(side, values=["sinusoida", "PWM"])
+        ttk.Separator(side).pack(fill=tk.X, pady=8)
+        ttk.Label(side, text="Makieta").pack(anchor=tk.W)
+        self.lbl_pot = ttk.Label(side, text="Potencjometr: -- %")
+        self.lbl_pot.pack(anchor=tk.W)
+        self.lbl_prox = ttk.Label(side, text="Czujnik zblizeniowy: --")
+        self.lbl_prox.pack(anchor=tk.W)
+        self.lbl_switch = ttk.Label(side, text="Przelacznik: --")
+        self.lbl_switch.pack(anchor=tk.W)
+
+        ttk.Separator(side).pack(fill=tk.X, pady=8)
+        ttk.Label(side, text="Generacja AO").pack(anchor=tk.W)
+        self.combo_gen = ttk.Combobox(side, values=["sinusoida", "PWM"], state="readonly")
         self.combo_gen.current(0)
-        self.combo_gen.pack()
-        
+        self.combo_gen.pack(fill=tk.X)
+
+        ttk.Label(side, text="Amplituda [V]:").pack(anchor=tk.W)
+        self.ent_amp = ttk.Entry(side)
+        self.ent_amp.insert(0, "5")
+        self.ent_amp.pack(fill=tk.X)
+
+        ttk.Label(side, text="Czestotliwosc AO [Hz]:").pack(anchor=tk.W)
+        self.ent_gen_freq = ttk.Entry(side)
+        self.ent_gen_freq.insert(0, "1")
+        self.ent_gen_freq.pack(fill=tk.X)
+
+        ttk.Label(side, text="Wypelnienie PWM [%]:").pack(anchor=tk.W)
+        self.ent_duty = ttk.Entry(side)
+        self.ent_duty.insert(0, "50")
+        self.ent_duty.pack(fill=tk.X)
+
+        self.lbl_ao = ttk.Label(side, text="AO: -- V")
+        self.lbl_ao.pack(anchor=tk.W, pady=(4, 0))
         ttk.Button(side, text="START GEN", command=self.start_gen).pack(fill=tk.X)
         ttk.Button(side, text="STOP GEN", command=self.gen.stop).pack(fill=tk.X)
 
-        self.fig, self.ax = plt.subplots(figsize=(5, 4))
-        self.line, = self.ax.plot([], [], 'b-')
+        self.fig, self.ax = plt.subplots(figsize=(6, 4))
+        self.line, = self.ax.plot([], [], "b-")
+        self.ax.set_xlabel("Probka")
+        self.ax.set_ylabel("AI [V]")
         self.ax.set_ylim(-10, 10)
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.root)
         self.canvas.get_tk_widget().pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
     def handle_start_daq(self):
+        try:
+            self.daq.configure(
+                frequency=self.ent_freq.get(),
+                voltage_min=self.ent_range_min.get(),
+                voltage_max=self.ent_range_max.get(),
+            )
+            self._apply_axis_range()
+        except ValueError as exc:
+            messagebox.showerror("Niepoprawna konfiguracja", str(exc))
+            return
+
+        self.plot_data.clear()
         self.daq.start()
         self.btn_start_daq.config(state=tk.DISABLED)
         self.btn_stop_daq.config(state=tk.NORMAL)
         self.btn_meas.config(state=tk.NORMAL)
+        self.lbl_status.config(bg="blue", text="STATUS: AKWIZYCJA")
 
     def handle_stop_daq(self):
+        self._cancel_jobs()
+        if self.is_measuring:
+            self._stop_meas(save=True)
         self.daq.stop()
         self.btn_start_daq.config(state=tk.NORMAL)
         self.btn_stop_daq.config(state=tk.DISABLED)
-        self.btn_meas.config(state=tk.DISABLED)
-        self.lbl_status.config(bg="gray", text="STATUS: OK")
+        self.btn_meas.config(state=tk.DISABLED, text="START POMIARU")
+        self.lbl_status.config(bg="gray", text="STATUS: STOP")
 
     def start_gen(self):
-        if self.combo_gen.get() == "sinusoida": 
-            self.gen.set_sine(5, 1)
-        else: 
-            self.gen.set_pwm(5, 50)
+        try:
+            amplitude = float(self.ent_amp.get())
+            frequency = float(self.ent_gen_freq.get())
+            if self.combo_gen.get() == "sinusoida":
+                self.gen.set_sine(amplitude, frequency)
+            else:
+                self.gen.set_pwm(amplitude, float(self.ent_duty.get()), frequency)
+        except ValueError:
+            messagebox.showerror("Niepoprawna konfiguracja", "Parametry AO musza byc liczbami.")
+            return
         self.gen.start()
 
     def toggle_meas(self):
-        if not self.is_measuring:
-            self.current_measure_data = []
-            self.is_measuring = True
-            self.btn_meas.config(text="STOP POMIARU")
-            duration = float(self.ent_duration.get())
-            self.root.after(int(duration * 1000), self.toggle_meas)
-        else:
-            self._stop_meas()
-
-    def _auto_stop_meas(self):
         if self.is_measuring:
-            self.toggle_meas()
+            self._stop_meas(save=True)
+            return
 
-    def _stop_meas(self):
+        try:
+            duration = max(0.1, float(self.ent_duration.get()))
+        except ValueError:
+            messagebox.showerror("Niepoprawna konfiguracja", "Dlugosc pomiaru musi byc liczba.")
+            return
+
+        self.current_measure_data = []
+        self.is_measuring = True
+        self.btn_meas.config(text="STOP POMIARU")
+        self.lbl_status.config(bg="green", text="STATUS: POMIAR")
+        self.measure_stop_job = self.root.after(int(duration * 1000), lambda: self._stop_meas(save=True))
+
+    def _stop_meas(self, save):
         self.is_measuring = False
         self.btn_meas.config(text="START POMIARU")
-        self.save_data()
-        if self.auto_mode.get():
-            self.root.after(3000, self.toggle_meas)
+        if self.measure_stop_job is not None:
+            try:
+                self.root.after_cancel(self.measure_stop_job)
+            except tk.TclError:
+                pass
+            self.measure_stop_job = None
 
+        if save and self.current_measure_data:
+            filename = self.save_data()
+            self.lbl_auto.config(text=f"Zapisano: {filename.name}")
+        elif save:
+            self.lbl_auto.config(text="Brak probek do zapisu")
+
+        if self.auto_mode.get() and self.daq.is_running:
+            self.lbl_status.config(bg="orange", text="STATUS: PRZERWA AUTO")
+            self.lbl_auto.config(text="Auto: kolejny pomiar za 3 s")
+            self.auto_start_job = self.root.after(3000, self.toggle_meas)
+        elif self.daq.is_running:
+            self.lbl_status.config(bg="blue", text="STATUS: AKWIZYCJA")
 
     def save_data(self):
-        fname = f"data_{datetime.datetime.now().strftime('%H%M%S')}.csv"
-        with open(fname, 'w', newline='') as f:
-            csv.writer(f).writerow(self.current_measure_data)
+        out_dir = Path(__file__).resolve().parent
+        fname = out_dir / f"data_{datetime.datetime.now().strftime('%H%M%S')}.csv"
+        fieldnames = ["time_s", "ai_v", "di", "potentiometer", "proximity", "switch", "limit_ok"]
+        with fname.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(self.current_measure_data)
+        return fname
 
     def update_gui(self):
         samples = self.daq.get_samples()
         if samples:
-            self.plot_data.extend(samples)
-            if self.is_measuring: 
-                self.current_measure_data.extend(samples)
-            
-            val = samples[-1]
-            if val < float(self.ent_min.get()) or val > float(self.ent_max.get()):
-                self.lbl_status.config(bg="red", text="POZA LIMITEM!")
-            else:
-                if self.is_measuring:
-                    self.lbl_status.config(bg="green", text="W LIMICIE")
+            try:
+                limit_min = float(self.ent_min.get())
+                limit_max = float(self.ent_max.get())
+            except ValueError:
+                limit_min = float("-inf")
+                limit_max = float("inf")
 
-            self.line.set_data(range(len(self.plot_data)), self.plot_data)
-            self.ax.set_xlim(0, len(self.plot_data))
-            self.canvas.draw()
+            for sample in samples:
+                sample["limit_ok"] = limit_min <= sample["ai_v"] <= limit_max
+
+            self.plot_data.extend(sample["ai_v"] for sample in samples)
+            if self.is_measuring:
+                self.current_measure_data.extend(samples)
+
+            last = samples[-1]
+            self._update_status(last)
+            self._update_plot()
+
+        if self.gen.is_running:
+            self.lbl_ao.config(text=f"AO: {self.gen.get_value():.3f} V")
+        else:
+            self.lbl_ao.config(text="AO: -- V")
+
         self.root.after(100, self.update_gui)
+
+    def _update_status(self, sample):
+        self.lbl_ai.config(text=f"AI: {sample['ai_v']:.3f} V")
+        self.lbl_di.config(text=f"DI: {sample['di']}")
+        self.lbl_pot.config(text=f"Potencjometr: {sample['potentiometer'] * 100:.1f} %")
+        self.lbl_prox.config(text=f"Czujnik zblizeniowy: {sample['proximity']}")
+        self.lbl_switch.config(text=f"Przelacznik: {sample['switch']}")
+
+        if self.is_measuring:
+            if sample["limit_ok"]:
+                self.lbl_status.config(bg="green", text="STATUS: W LIMICIE")
+            else:
+                self.lbl_status.config(bg="red", text="STATUS: POZA LIMITEM")
+
+    def _update_plot(self):
+        self.line.set_data(range(len(self.plot_data)), self.plot_data)
+        self.ax.set_xlim(0, max(10, len(self.plot_data)))
+        self.canvas.draw_idle()
+
+    def _apply_axis_range(self):
+        low = float(self.ent_range_min.get())
+        high = float(self.ent_range_max.get())
+        padding = max(0.5, (high - low) * 0.05)
+        self.ax.set_ylim(low - padding, high + padding)
+        self.canvas.draw_idle()
+
+    def _cancel_jobs(self):
+        for job in (self.measure_stop_job, self.auto_start_job):
+            if job is not None:
+                try:
+                    self.root.after_cancel(job)
+                except tk.TclError:
+                    pass
+        self.measure_stop_job = None
+        self.auto_start_job = None
+
+    def close(self):
+        self._cancel_jobs()
+        self.daq.stop()
+        self.gen.stop()
+        self.root.destroy()
+
 
 if __name__ == "__main__":
     root = tk.Tk()
     app = MainApp(root)
-    root.protocol("WM_DELETE_WINDOW", lambda: (app.daq.stop(), app.gen.stop(), root.destroy()))
+    root.protocol("WM_DELETE_WINDOW", app.close)
     root.mainloop()
