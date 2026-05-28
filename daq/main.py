@@ -45,8 +45,37 @@ class MainApp:
             pass
 
     def _setup_ui(self):
-        side = ttk.Frame(self.root, padding=10)
-        side.pack(side=tk.LEFT, fill=tk.Y)
+        side_container = ttk.Frame(self.root)
+        side_container.pack(side=tk.LEFT, fill=tk.Y)
+
+        side_canvas = tk.Canvas(side_container, width=210, highlightthickness=0)
+        side_scrollbar = ttk.Scrollbar(side_container, orient=tk.VERTICAL, command=side_canvas.yview)
+        side_canvas.configure(yscrollcommand=side_scrollbar.set)
+        side_canvas.pack(side=tk.LEFT, fill=tk.Y, expand=True)
+        side_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        side = ttk.Frame(side_canvas, padding=10)
+        side_window = side_canvas.create_window((0, 0), window=side, anchor=tk.NW)
+
+        def update_scroll_region(_event=None):
+            side_canvas.configure(scrollregion=side_canvas.bbox("all"))
+
+        def update_side_width(event):
+            side_canvas.itemconfigure(side_window, width=event.width)
+
+        def on_mousewheel(event):
+            if event.num == 4:
+                side_canvas.yview_scroll(-1, "units")
+            elif event.num == 5:
+                side_canvas.yview_scroll(1, "units")
+            else:
+                side_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        side.bind("<Configure>", update_scroll_region)
+        side_canvas.bind("<Configure>", update_side_width)
+        side_canvas.bind_all("<MouseWheel>", on_mousewheel)
+        side_canvas.bind_all("<Button-4>", on_mousewheel)
+        side_canvas.bind_all("<Button-5>", on_mousewheel)
 
         ttk.Label(side, text="Limit MIN [V]:").pack(anchor=tk.W)
         self.ent_min = ttk.Entry(side)
