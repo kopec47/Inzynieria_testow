@@ -26,6 +26,7 @@ class MainApp:
         self.current_measure_data = []
         self.measure_stop_job = None
         self.auto_start_job = None
+        self.update_job = None
 
         self._setup_ui()
         self.update_gui()
@@ -64,12 +65,19 @@ class MainApp:
         self.ent_duration.insert(0, "5")
         self.ent_duration.pack(fill=tk.X)
 
+        ttk.Label(side, text="Przerwa auto [s]:").pack(anchor=tk.W)
+        self.ent_auto_pause = ttk.Entry(side)
+        self.ent_auto_pause.insert(0, "3")
+        self.ent_auto_pause.pack(fill=tk.X)
+
         self.lbl_status = tk.Label(side, text="STATUS: STOP", bg="gray", fg="white", width=22)
         self.lbl_status.pack(pady=8, fill=tk.X)
         self.lbl_ai = ttk.Label(side, text="AI: -- V")
         self.lbl_ai.pack(anchor=tk.W)
         self.lbl_di = ttk.Label(side, text="DI: --")
         self.lbl_di.pack(anchor=tk.W)
+        self.lbl_samples = ttk.Label(side, text="Probki pomiaru: 0")
+        self.lbl_samples.pack(anchor=tk.W)
         self.lbl_auto = ttk.Label(side, text="Tryb: reczny")
         self.lbl_auto.pack(anchor=tk.W, pady=(0, 8))
 
@@ -83,7 +91,7 @@ class MainApp:
         ttk.Checkbutton(side, text="Tryb automatyczny", variable=self.auto_mode).pack(anchor=tk.W)
 
         ttk.Separator(side).pack(fill=tk.X, pady=8)
-        ttk.Label(side, text="Makieta").pack(anchor=tk.W)
+        ttk.Label(side, text="Wejscia testowe (symulacja)").pack(anchor=tk.W)
         self.lbl_pot = ttk.Label(side, text="Potencjometr: -- %")
         self.lbl_pot.pack(anchor=tk.W)
         self.lbl_prox = ttk.Label(side, text="Czujnik zblizeniowy: --")
@@ -138,21 +146,25 @@ class MainApp:
             return
 
         self.plot_data.clear()
+        self.current_measure_data = []
+        self.lbl_samples.config(text="Probki pomiaru: 0")
         self.daq.start()
         self.btn_start_daq.config(state=tk.DISABLED)
         self.btn_stop_daq.config(state=tk.NORMAL)
         self.btn_meas.config(state=tk.NORMAL)
         self.lbl_status.config(bg="blue", text="STATUS: AKWIZYCJA")
+        self.lbl_auto.config(text="Tryb: auto" if self.auto_mode.get() else "Tryb: reczny")
 
     def handle_stop_daq(self):
         self._cancel_jobs()
         if self.is_measuring:
-            self._stop_meas(save=True)
+            self._stop_meas(save=True, restart_auto=False)
         self.daq.stop()
         self.btn_start_daq.config(state=tk.NORMAL)
         self.btn_stop_daq.config(state=tk.DISABLED)
         self.btn_meas.config(state=tk.DISABLED, text="START POMIARU")
         self.lbl_status.config(bg="gray", text="STATUS: STOP")
+        self.lbl_auto.config(text="Tryb: reczny")
 
     def start_gen(self):
         try:
@@ -181,10 +193,12 @@ class MainApp:
         self.current_measure_data = []
         self.is_measuring = True
         self.btn_meas.config(text="STOP POMIARU")
+        self.lbl_samples.config(text="Probki pomiaru: 0")
         self.lbl_status.config(bg="green", text="STATUS: POMIAR")
+        self.lbl_auto.config(text="Tryb: pomiar")
         self.measure_stop_job = self.root.after(int(duration * 1000), lambda: self._stop_meas(save=True))
 
-    def _stop_meas(self, save):
+    def _stop_meas(self, save, restart_auto=True):
         self.is_measuring = False
         self.btn_meas.config(text="START POMIARU")
         if self.measure_stop_job is not None:
@@ -200,12 +214,17 @@ class MainApp:
         elif save:
             self.lbl_auto.config(text="Brak probek do zapisu")
 
-        if self.auto_mode.get() and self.daq.is_running:
+        if restart_auto and self.auto_mode.get() and self.daq.is_running:
+            try:
+                pause_s = max(0.1, float(self.ent_auto_pause.get()))
+            except ValueError:
+                pause_s = 3.0
             self.lbl_status.config(bg="orange", text="STATUS: PRZERWA AUTO")
-            self.lbl_auto.config(text="Auto: kolejny pomiar za 3 s")
-            self.auto_start_job = self.root.after(3000, self.toggle_meas)
+            self.lbl_auto.config(text=f"Auto: kolejny pomiar za {pause_s:.1f} s")
+            self.auto_start_job = self.root.after(int(pause_s * 1000), self.toggle_meas)
         elif self.daq.is_running:
             self.lbl_status.config(bg="blue", text="STATUS: AKWIZYCJA")
+            self.lbl_auto.config(text="Tryb: auto" if self.auto_mode.get() else "Tryb: reczny")
 
     def save_data(self):
         out_dir = Path(__file__).resolve().parent
@@ -233,6 +252,7 @@ class MainApp:
             self.plot_data.extend(sample["ai_v"] for sample in samples)
             if self.is_measuring:
                 self.current_measure_data.extend(samples)
+                self.lbl_samples.config(text=f"Probki pomiaru: {len(self.current_measure_data)}")
 
             last = samples[-1]
             self._update_status(last)
@@ -243,7 +263,7 @@ class MainApp:
         else:
             self.lbl_ao.config(text="AO: -- V")
 
-        self.root.after(100, self.update_gui)
+        self.update_job = self.root.after(100, self.update_gui)
 
     def _update_status(self, sample):
         self.lbl_ai.config(text=f"AI: {sample['ai_v']:.3f} V")
@@ -279,6 +299,12 @@ class MainApp:
                     pass
         self.measure_stop_job = None
         self.auto_start_job = None
+        if self.update_job is not None:
+            try:
+                self.root.after_cancel(self.update_job)
+            except tk.TclError:
+                pass
+            self.update_job = None
 
     def close(self):
         self._cancel_jobs()
