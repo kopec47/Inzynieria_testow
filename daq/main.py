@@ -1,5 +1,6 @@
 import csv
 import datetime
+import traceback
 from collections import deque
 from pathlib import Path
 import tkinter as tk
@@ -16,6 +17,7 @@ class MainApp:
     def __init__(self, root):
         self.root = root
         self.root.title("System testowy DAQ")
+        self.root.report_callback_exception = self._handle_tk_exception
 
         self.daq = AnalogAcquisition()
         self.gen = AnalogGeneration()
@@ -27,9 +29,20 @@ class MainApp:
         self.measure_stop_job = None
         self.auto_start_job = None
         self.update_job = None
+        self.closing = False
 
         self._setup_ui()
         self.update_gui()
+
+    def _handle_tk_exception(self, exc_type, exc_value, exc_tb):
+        log_path = Path(__file__).resolve().parent / "daq_error.log"
+        with log_path.open("a", encoding="utf-8") as f:
+            f.write(f"\n[{datetime.datetime.now().isoformat(sep=' ', timespec='seconds')}]\n")
+            traceback.print_exception(exc_type, exc_value, exc_tb, file=f)
+        try:
+            messagebox.showerror("Blad aplikacji", f"{exc_type.__name__}: {exc_value}\n\nSzczegoly zapisano w daq_error.log")
+        except tk.TclError:
+            pass
 
     def _setup_ui(self):
         side = ttk.Frame(self.root, padding=10)
@@ -237,33 +250,43 @@ class MainApp:
         return fname
 
     def update_gui(self):
-        samples = self.daq.get_samples()
-        if samples:
+        if self.closing:
+            return
+
+        try:
+            samples = self.daq.get_samples()
+            if samples:
+                try:
+                    limit_min = float(self.ent_min.get())
+                    limit_max = float(self.ent_max.get())
+                except ValueError:
+                    limit_min = float("-inf")
+                    limit_max = float("inf")
+
+                for sample in samples:
+                    sample["limit_ok"] = limit_min <= sample["ai_v"] <= limit_max
+
+                self.plot_data.extend(sample["ai_v"] for sample in samples)
+                if self.is_measuring:
+                    self.current_measure_data.extend(samples)
+                    self.lbl_samples.config(text=f"Probki pomiaru: {len(self.current_measure_data)}")
+
+                last = samples[-1]
+                self._update_status(last)
+                self._update_plot()
+
+            if self.gen.is_running:
+                self.lbl_ao.config(text=f"AO: {self.gen.get_value():.3f} V")
+            else:
+                self.lbl_ao.config(text="AO: -- V")
+        except Exception:
+            self._handle_tk_exception(*__import__("sys").exc_info())
+
+        if not self.closing:
             try:
-                limit_min = float(self.ent_min.get())
-                limit_max = float(self.ent_max.get())
-            except ValueError:
-                limit_min = float("-inf")
-                limit_max = float("inf")
-
-            for sample in samples:
-                sample["limit_ok"] = limit_min <= sample["ai_v"] <= limit_max
-
-            self.plot_data.extend(sample["ai_v"] for sample in samples)
-            if self.is_measuring:
-                self.current_measure_data.extend(samples)
-                self.lbl_samples.config(text=f"Probki pomiaru: {len(self.current_measure_data)}")
-
-            last = samples[-1]
-            self._update_status(last)
-            self._update_plot()
-
-        if self.gen.is_running:
-            self.lbl_ao.config(text=f"AO: {self.gen.get_value():.3f} V")
-        else:
-            self.lbl_ao.config(text="AO: -- V")
-
-        self.update_job = self.root.after(100, self.update_gui)
+                self.update_job = self.root.after(100, self.update_gui)
+            except tk.TclError:
+                self.update_job = None
 
     def _update_status(self, sample):
         self.lbl_ai.config(text=f"AI: {sample['ai_v']:.3f} V")
@@ -307,10 +330,14 @@ class MainApp:
             self.update_job = None
 
     def close(self):
+        self.closing = True
         self._cancel_jobs()
         self.daq.stop()
         self.gen.stop()
-        self.root.destroy()
+        try:
+            self.root.destroy()
+        except tk.TclError:
+            pass
 
 
 if __name__ == "__main__":
