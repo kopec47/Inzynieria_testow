@@ -127,6 +127,7 @@ class MainApp:
         self.btn_start_daq.pack(fill=tk.X)
         self.btn_stop_daq = ttk.Button(side, text="STOP AKWIZYCJI", command=self.handle_stop_daq, state=tk.DISABLED)
         self.btn_stop_daq.pack(fill=tk.X, pady=2)
+        ttk.Button(side, text="WYCZYSC WYKRES", command=self.clear_plot).pack(fill=tk.X, pady=2)
 
         self.btn_meas = ttk.Button(side, text="START POMIARU", command=self.toggle_meas, state=tk.DISABLED)
         self.btn_meas.pack(fill=tk.X, pady=5)
@@ -207,6 +208,12 @@ class MainApp:
         self.btn_meas.config(state=tk.DISABLED, text="START POMIARU")
         self.lbl_status.config(bg="gray", text="STATUS: STOP")
         self.lbl_auto.config(text="Tryb: reczny")
+
+    def clear_plot(self):
+        self.plot_data.clear()
+        self.line.set_data([], [])
+        self.ax.set_xlim(0, 10)
+        self.canvas.draw_idle()
 
     def start_gen(self):
         try:
