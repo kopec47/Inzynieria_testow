@@ -10,6 +10,8 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 from daq_acquisition import AnalogAcquisition
 from daq_generation import AnalogGeneration
+from daq_acquisition_ni import NIDaqAcquisition
+from daq_generation_ni import NIDaqGeneration
 
 
 class MainApp:
@@ -18,6 +20,7 @@ class MainApp:
         self.root.title("System testowy DAQ")
         self.root.report_callback_exception = self._handle_tk_exception
 
+        self.backend_mode = tk.StringVar(value="Symulacja")
         self.daq = AnalogAcquisition()
         self.gen = AnalogGeneration()
 
@@ -80,6 +83,34 @@ class MainApp:
         side_canvas.bind_all("<Button-4>", on_mousewheel)
         side_canvas.bind_all("<Button-5>", on_mousewheel)
 
+        ttk.Label(side, text="Tryb DAQ:").pack(anchor=tk.W)
+        self.combo_backend = ttk.Combobox(side, values=["Symulacja", "NI myDAQ"], state="readonly",
+                                          textvariable=self.backend_mode)
+        self.combo_backend.pack(fill=tk.X)
+        self.combo_backend.bind("<<ComboboxSelected>>", self.change_backend)
+
+        ttk.Label(side, text="Urzadzenie NI:").pack(anchor=tk.W)
+        self.ent_device = ttk.Entry(side)
+        self.ent_device.insert(0, "Dev1")
+        self.ent_device.pack(fill=tk.X)
+
+        ttk.Label(side, text="Kanal AI:").pack(anchor=tk.W)
+        self.ent_ai_channel = ttk.Entry(side)
+        self.ent_ai_channel.insert(0, "ai0")
+        self.ent_ai_channel.pack(fill=tk.X)
+
+        ttk.Label(side, text="Linia DI:").pack(anchor=tk.W)
+        self.ent_di_line = ttk.Entry(side)
+        self.ent_di_line.insert(0, "port0/line0")
+        self.ent_di_line.pack(fill=tk.X)
+
+        ttk.Label(side, text="Kanal AO:").pack(anchor=tk.W)
+        self.ent_ao_channel = ttk.Entry(side)
+        self.ent_ao_channel.insert(0, "ao0")
+        self.ent_ao_channel.pack(fill=tk.X)
+
+        ttk.Separator(side).pack(fill=tk.X, pady=8)
+
         ttk.Label(side, text="Limit MIN [V]:").pack(anchor=tk.W)
         self.ent_min = ttk.Entry(side)
         self.ent_min.insert(0, "-4.0")
@@ -117,6 +148,8 @@ class MainApp:
 
         self.lbl_status = tk.Label(side, text="STATUS: STOP", bg="gray", fg="white", width=22)
         self.lbl_status.pack(pady=8, fill=tk.X)
+        self.lbl_backend = ttk.Label(side, text="Backend: Symulacja")
+        self.lbl_backend.pack(anchor=tk.W)
         self.lbl_ai = ttk.Label(side, text="AI: -- V")
         self.lbl_ai.pack(anchor=tk.W)
         self.lbl_di = ttk.Label(side, text="DI: --")
@@ -139,7 +172,7 @@ class MainApp:
         ttk.Checkbutton(side, text="Tryb automatyczny", variable=self.auto_mode).pack(anchor=tk.W)
 
         ttk.Separator(side).pack(fill=tk.X, pady=8)
-        ttk.Label(side, text="Wejscia testowe (symulacja)").pack(anchor=tk.W)
+        ttk.Label(side, text="Wejscia testowe").pack(anchor=tk.W)
         self.lbl_pot = ttk.Label(side, text="Potencjometr: -- %")
         self.lbl_pot.pack(anchor=tk.W)
         self.lbl_prox = ttk.Label(side, text="Czujnik zblizeniowy: --")
@@ -184,7 +217,37 @@ class MainApp:
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.root)
         self.canvas.get_tk_widget().pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
+    def change_backend(self, _event=None):
+        if self.daq.is_running or self.gen.is_running:
+            messagebox.showwarning("Zmiana trybu DAQ", "Zatrzymaj akwizycje i generacje AO przed zmiana trybu.")
+            self.backend_mode.set("NI myDAQ" if isinstance(self.daq, NIDaqAcquisition) else "Symulacja")
+            return
+
+        self.daq.stop()
+        self.gen.stop()
+        self.daq = self._create_acquisition_backend()
+        self.gen = self._create_generation_backend()
+        self.clear_plot()
+        self.lbl_backend.config(text=f"Backend: {self.backend_mode.get()}")
+
+    def _create_acquisition_backend(self):
+        if self.backend_mode.get() == "NI myDAQ":
+            device = self.ent_device.get().strip() or "Dev1"
+            ai_channel = self.ent_ai_channel.get().strip() or "ai0"
+            di_line = self.ent_di_line.get().strip()
+            return NIDaqAcquisition(device_name=device, ai_channel=ai_channel, di_line=di_line)
+        return AnalogAcquisition()
+
+    def _create_generation_backend(self):
+        if self.backend_mode.get() == "NI myDAQ":
+            device = self.ent_device.get().strip() or "Dev1"
+            ao_channel = self.ent_ao_channel.get().strip() or "ao0"
+            return NIDaqGeneration(device_name=device, ao_channel=ao_channel)
+        return AnalogGeneration()
+
     def handle_start_daq(self):
+        self.daq = self._create_acquisition_backend()
+        self.lbl_backend.config(text=f"Backend: {self.backend_mode.get()}")
         try:
             self.daq.configure(
                 frequency=self.ent_freq.get(),
@@ -204,7 +267,13 @@ class MainApp:
         self.acquisition_sample_count = 0
         self.lbl_acq_samples.config(text="Probki akwizycji: 0")
         self.lbl_samples.config(text="Probki pomiaru: 0")
-        self.daq.start()
+        try:
+            self.daq.start()
+        except Exception as exc:
+            messagebox.showerror("Blad startu DAQ", str(exc))
+            self.daq.stop()
+            self._set_daq_stopped_ui()
+            return
         self._update_plot_description()
         self.btn_start_daq.config(state=tk.DISABLED)
         self.btn_stop_daq.config(state=tk.NORMAL)
@@ -235,21 +304,36 @@ class MainApp:
         try:
             amplitude = float(self.ent_amp.get())
             frequency = float(self.ent_gen_freq.get())
-            if shape == "sinusoida":
-                self.gen.set_sine(amplitude, frequency)
-            else:
-                self.gen.set_pwm(amplitude, float(self.ent_duty.get()), frequency)
+            duty_cycle = float(self.ent_duty.get()) if shape != "sinusoida" else 50.0
         except ValueError:
             messagebox.showerror("Niepoprawna konfiguracja", "Parametry AO musza byc liczbami.")
             return
 
         if self.gen.is_running:
             self.gen.stop()
+        self.gen = self._create_generation_backend()
+
+        try:
+            if shape == "sinusoida":
+                self.gen.set_sine(amplitude, frequency)
+            else:
+                self.gen.set_pwm(amplitude, duty_cycle, frequency)
+        except ValueError:
+            messagebox.showerror("Niepoprawna konfiguracja", "Parametry AO musza byc liczbami.")
+            return
+
+        self.lbl_backend.config(text=f"Backend: {self.backend_mode.get()}")
         self.ao_plot_data.clear()
         self.ao_time_data.clear()
         self.ao_line.set_data([], [])
         self.ao_line.set_drawstyle("default" if shape == "sinusoida" else "steps-post")
-        self.gen.start()
+        try:
+            self.gen.start()
+        except Exception as exc:
+            messagebox.showerror("Blad startu AO", str(exc))
+            self.gen.stop()
+            self._update_plot_description()
+            return
         self._update_plot_description()
 
     def stop_gen(self):
