@@ -1,7 +1,6 @@
 import csv
 import datetime
 import traceback
-from collections import deque
 from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -24,8 +23,12 @@ class MainApp:
 
         self.is_measuring = False
         self.auto_mode = tk.BooleanVar(value=False)
-        self.plot_data = deque(maxlen=500)
+        self.plot_data = []
+        self.ao_plot_data = []
+        self.plot_time_data = []
+        self.ao_time_data = []
         self.current_measure_data = []
+        self.acquisition_sample_count = 0
         self.measure_stop_job = None
         self.auto_start_job = None
         self.update_job = None
@@ -118,6 +121,8 @@ class MainApp:
         self.lbl_ai.pack(anchor=tk.W)
         self.lbl_di = ttk.Label(side, text="DI: --")
         self.lbl_di.pack(anchor=tk.W)
+        self.lbl_acq_samples = ttk.Label(side, text="Probki akwizycji: 0")
+        self.lbl_acq_samples.pack(anchor=tk.W)
         self.lbl_samples = ttk.Label(side, text="Probki pomiaru: 0")
         self.lbl_samples.pack(anchor=tk.W)
         self.lbl_auto = ttk.Label(side, text="Tryb: reczny")
@@ -166,13 +171,16 @@ class MainApp:
         self.lbl_ao = ttk.Label(side, text="AO: -- V")
         self.lbl_ao.pack(anchor=tk.W, pady=(4, 0))
         ttk.Button(side, text="START GEN", command=self.start_gen).pack(fill=tk.X)
-        ttk.Button(side, text="STOP GEN", command=self.gen.stop).pack(fill=tk.X)
+        ttk.Button(side, text="STOP GEN", command=self.stop_gen).pack(fill=tk.X)
 
         self.fig, self.ax = plt.subplots(figsize=(6, 4))
-        self.line, = self.ax.plot([], [], "b-")
-        self.ax.set_xlabel("Probka")
-        self.ax.set_ylabel("AI [V]")
+        self.line, = self.ax.plot([], [], "b-", label="AI")
+        self.ao_line, = self.ax.plot([], [], "r--", label="AO")
+        self.ax.set_title("Brak aktywnego sygnalu")
+        self.ax.set_xlabel("Czas [s]")
+        self.ax.set_ylabel("Napiecie [V]")
         self.ax.set_ylim(-10, 10)
+        self.ax.legend(loc="upper right")
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.root)
         self.canvas.get_tk_widget().pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
@@ -189,9 +197,15 @@ class MainApp:
             return
 
         self.plot_data.clear()
+        self.ao_plot_data.clear()
+        self.plot_time_data.clear()
+        self.ao_time_data.clear()
         self.current_measure_data = []
+        self.acquisition_sample_count = 0
+        self.lbl_acq_samples.config(text="Probki akwizycji: 0")
         self.lbl_samples.config(text="Probki pomiaru: 0")
         self.daq.start()
+        self._update_plot_description()
         self.btn_start_daq.config(state=tk.DISABLED)
         self.btn_stop_daq.config(state=tk.NORMAL)
         self.btn_meas.config(state=tk.NORMAL)
@@ -199,38 +213,52 @@ class MainApp:
         self.lbl_auto.config(text="Tryb: auto" if self.auto_mode.get() else "Tryb: reczny")
 
     def handle_stop_daq(self):
-        self._cancel_jobs()
+        self._cancel_measure_jobs()
         if self.is_measuring:
             self._stop_meas(save=True, restart_auto=False)
         self.daq.stop()
-        self.btn_start_daq.config(state=tk.NORMAL)
-        self.btn_stop_daq.config(state=tk.DISABLED)
-        self.btn_meas.config(state=tk.DISABLED, text="START POMIARU")
-        self.lbl_status.config(bg="gray", text="STATUS: STOP")
-        self.lbl_auto.config(text="Tryb: reczny")
+        self._set_daq_stopped_ui()
 
     def clear_plot(self):
         self.plot_data.clear()
+        self.ao_plot_data.clear()
+        self.plot_time_data.clear()
+        self.ao_time_data.clear()
         self.line.set_data([], [])
+        self.ao_line.set_data([], [])
         self.ax.set_xlim(0, 10)
+        self._update_plot_description()
         self.canvas.draw_idle()
 
     def start_gen(self):
+        shape = self.combo_gen.get()
         try:
             amplitude = float(self.ent_amp.get())
             frequency = float(self.ent_gen_freq.get())
-            if self.combo_gen.get() == "sinusoida":
+            if shape == "sinusoida":
                 self.gen.set_sine(amplitude, frequency)
             else:
                 self.gen.set_pwm(amplitude, float(self.ent_duty.get()), frequency)
         except ValueError:
             messagebox.showerror("Niepoprawna konfiguracja", "Parametry AO musza byc liczbami.")
             return
+
+        if self.gen.is_running:
+            self.gen.stop()
+        self.ao_plot_data.clear()
+        self.ao_time_data.clear()
+        self.ao_line.set_data([], [])
+        self.ao_line.set_drawstyle("default" if shape == "sinusoida" else "steps-post")
         self.gen.start()
+        self._update_plot_description()
+
+    def stop_gen(self):
+        self.gen.stop()
+        self._update_plot_description()
 
     def toggle_meas(self):
         if self.is_measuring:
-            self._stop_meas(save=True)
+            self._stop_manual_measurement()
             return
 
         try:
@@ -240,12 +268,28 @@ class MainApp:
             return
 
         self.current_measure_data = []
+        self.daq.get_samples()
         self.is_measuring = True
         self.btn_meas.config(text="STOP POMIARU")
         self.lbl_samples.config(text="Probki pomiaru: 0")
         self.lbl_status.config(bg="green", text="STATUS: POMIAR")
         self.lbl_auto.config(text="Tryb: pomiar")
-        self.measure_stop_job = self.root.after(int(duration * 1000), lambda: self._stop_meas(save=True))
+        self.measure_stop_job = self.root.after(int(duration * 1000), self._finish_timed_measurement)
+
+    def _finish_timed_measurement(self):
+        if self.auto_mode.get():
+            self._stop_meas(save=True, restart_auto=True)
+            return
+
+        self._stop_meas(save=True, restart_auto=False)
+        self.daq.stop()
+        self._set_daq_stopped_ui()
+
+    def _stop_manual_measurement(self):
+        self._stop_meas(save=True, restart_auto=False)
+        if not self.auto_mode.get():
+            self.daq.stop()
+            self._set_daq_stopped_ui()
 
     def _stop_meas(self, save, restart_auto=True):
         self.is_measuring = False
@@ -275,6 +319,14 @@ class MainApp:
             self.lbl_status.config(bg="blue", text="STATUS: AKWIZYCJA")
             self.lbl_auto.config(text="Tryb: auto" if self.auto_mode.get() else "Tryb: reczny")
 
+    def _set_daq_stopped_ui(self):
+        self.btn_start_daq.config(state=tk.NORMAL)
+        self.btn_stop_daq.config(state=tk.DISABLED)
+        self.btn_meas.config(state=tk.DISABLED, text="START POMIARU")
+        self.lbl_status.config(bg="gray", text="STATUS: STOP")
+        self.lbl_auto.config(text="Tryb: reczny")
+        self._update_plot_description()
+
     def save_data(self):
         out_dir = Path(__file__).resolve().parent
         fname = out_dir / f"data_{datetime.datetime.now().strftime('%H%M%S')}.csv"
@@ -302,6 +354,9 @@ class MainApp:
                 for sample in samples:
                     sample["limit_ok"] = limit_min <= sample["ai_v"] <= limit_max
 
+                self.acquisition_sample_count += len(samples)
+                self.lbl_acq_samples.config(text=f"Probki akwizycji: {self.acquisition_sample_count}")
+                self.plot_time_data.extend(sample["time_s"] for sample in samples)
                 self.plot_data.extend(sample["ai_v"] for sample in samples)
                 if self.is_measuring:
                     self.current_measure_data.extend(samples)
@@ -312,7 +367,11 @@ class MainApp:
                 self._update_plot()
 
             if self.gen.is_running:
-                self.lbl_ao.config(text=f"AO: {self.gen.get_value():.3f} V")
+                ao_value = self.gen.get_value()
+                self.lbl_ao.config(text=f"AO: {ao_value:.3f} V")
+                self.ao_time_data.append(self.gen.get_elapsed_time())
+                self.ao_plot_data.append(ao_value)
+                self._update_plot()
             else:
                 self.lbl_ao.config(text="AO: -- V")
         except Exception:
@@ -338,18 +397,114 @@ class MainApp:
                 self.lbl_status.config(bg="red", text="STATUS: POZA LIMITEM")
 
     def _update_plot(self):
-        self.line.set_data(range(len(self.plot_data)), self.plot_data)
-        self.ax.set_xlim(0, max(10, len(self.plot_data)))
+        self.line.set_data(self.plot_time_data, self.plot_data)
+        self.ao_line.set_data(self.ao_time_data, self.ao_plot_data)
+        self._update_plot_x_range()
         self.canvas.draw_idle()
 
-    def _apply_axis_range(self):
-        low = float(self.ent_range_min.get())
-        high = float(self.ent_range_max.get())
+    def _update_plot_x_range(self):
+        latest_times = []
+        if self.plot_time_data:
+            latest_times.append(self.plot_time_data[-1])
+        if self.ao_time_data:
+            latest_times.append(self.ao_time_data[-1])
+
+        if not latest_times:
+            self.ax.set_xlim(0, 1)
+            return
+
+        high = max(1.0, max(latest_times))
+        padding = max(0.1, high * 0.03)
+        self.ax.set_xlim(0, high + padding)
+
+    def _update_plot_description(self):
+        show_ai = self.daq.is_running or bool(self.plot_data)
+        show_ao = self.gen.is_running or bool(self.ao_plot_data)
+        ao_shape = self.combo_gen.get()
+
+        self.line.set_label("AI - akwizycja")
+        self.ao_line.set_label(f"AO - {ao_shape}")
+        self.line.set_visible(show_ai)
+        self.ao_line.set_visible(show_ao)
+
+        if show_ai and show_ao:
+            self.ax.set_title("Akwizycja AI i generacja AO")
+            self.ax.set_xlabel("Czas [s]")
+        elif show_ai:
+            self.ax.set_title("Akwizycja wejscia analogowego AI")
+            self.ax.set_xlabel("Czas [s]")
+        elif show_ao:
+            self.ax.set_title(f"Generacja wyjscia analogowego AO: {ao_shape}")
+            self.ax.set_xlabel("Czas [s]")
+        else:
+            self.ax.set_title("Brak aktywnego sygnalu")
+            self.ax.set_xlabel("Czas [s]")
+
+        self.ax.set_ylabel("Napiecie [V]")
+        self._update_plot_y_range(show_ai, show_ao, ao_shape)
+        handles = []
+        if show_ai:
+            handles.append(self.line)
+        if show_ao:
+            handles.append(self.ao_line)
+        legend = self.ax.get_legend()
+        if handles:
+            self.ax.legend(handles=handles, loc="upper right")
+        elif legend is not None:
+            legend.remove()
+        self._update_plot_x_range()
+        self.canvas.draw_idle()
+
+    def _update_plot_y_range(self, show_ai, show_ao, ao_shape):
+        lows = []
+        highs = []
+
+        if show_ai:
+            try:
+                lows.append(float(self.ent_range_min.get()))
+                highs.append(float(self.ent_range_max.get()))
+            except ValueError:
+                lows.append(-10.0)
+                highs.append(10.0)
+
+        if show_ao:
+            try:
+                amplitude = abs(float(self.ent_amp.get()))
+            except ValueError:
+                amplitude = 5.0
+            if ao_shape == "PWM":
+                lows.append(0.0)
+                highs.append(amplitude)
+            else:
+                lows.append(-amplitude)
+                highs.append(amplitude)
+
+        if not lows:
+            lows.append(-10.0)
+            highs.append(10.0)
+
+        low = min(lows)
+        high = max(highs)
+        if low == high:
+            low -= 1.0
+            high += 1.0
         padding = max(0.5, (high - low) * 0.05)
         self.ax.set_ylim(low - padding, high + padding)
+
+    def _apply_axis_range(self):
+        self._update_plot_description()
         self.canvas.draw_idle()
 
     def _cancel_jobs(self):
+        self._cancel_measure_jobs()
+        if self.update_job is not None:
+            try:
+                self.root.after_cancel(self.update_job)
+            except tk.TclError:
+                pass
+            self.update_job = None
+
+    def _cancel_measure_jobs(self):
         for job in (self.measure_stop_job, self.auto_start_job):
             if job is not None:
                 try:
@@ -358,12 +513,6 @@ class MainApp:
                     pass
         self.measure_stop_job = None
         self.auto_start_job = None
-        if self.update_job is not None:
-            try:
-                self.root.after_cancel(self.update_job)
-            except tk.TclError:
-                pass
-            self.update_job = None
 
     def close(self):
         self.closing = True

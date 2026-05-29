@@ -26,7 +26,7 @@ class TestingSuiteApp:
         btn_load.grid(row=0, column=0, padx=5)
 
         btn_plot = tk.Button(top_frame, text="Plot Data", command=self.plot_data)
-        btn_plot.grid(row=0, column=1, padx=5)
+        btn_plot.grid(row=0, column=1, padx=5) 
 
         btn_calc = tk.Button(top_frame, text="Calculate Statistics", command=self.calculate_statistics)
         btn_calc.grid(row=0, column=2, padx=5)  
@@ -73,6 +73,12 @@ class TestingSuiteApp:
         file_path = filedialog.askopenfilename(filetypes=[("CSV files", "*.csv")])
         if file_path:
             try:
+                self.a = None
+                self.b = None
+                self.entry_a.delete(0, tk.END)
+                self.entry_b.delete(0, tk.END)
+
+
                 self.df = pd.read_csv(file_path, sep=";")
 
                 for item in self.tree.get_children():
@@ -89,8 +95,8 @@ class TestingSuiteApp:
     def plot_data(self):
         if hasattr(self, "df") and self.df is not None:
             self.ax.clear()
-            self.ax.set_xlabel("Time")
-            self.ax.set_ylabel("Amplitude")
+            self.ax.set_xlabel("Time t [s]")
+            self.ax.set_ylabel("Amplitude [V]")
             self.ax.grid(True)
 
             x = self.df["time"]
@@ -109,6 +115,7 @@ class TestingSuiteApp:
                 self.ax.plot(x_vals, y_pred, color="red", label=f'Fit: {self.a:.2f}x + {self.b:.2f}')
                 self.ax.legend()
             
+            self.fig.tight_layout()
             self.canvas.draw()
 
     def calculate_statistics(self):
