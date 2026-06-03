@@ -10,8 +10,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 from daq_acquisition import AnalogAcquisition
 from daq_generation import AnalogGeneration
-from daq_acquisition_ni import NIDaqAcquisition
-from daq_generation_ni import NIDaqGeneration
+from daq_acquisition_esp32 import ESP32JoystickAcquisition
 
 
 class MainApp:
@@ -84,30 +83,15 @@ class MainApp:
         side_canvas.bind_all("<Button-5>", on_mousewheel)
 
         ttk.Label(side, text="Tryb DAQ:").pack(anchor=tk.W)
-        self.combo_backend = ttk.Combobox(side, values=["Symulacja", "NI myDAQ"], state="readonly",
+        self.combo_backend = ttk.Combobox(side, values=["Symulacja", "ESP32 joystick"], state="readonly",
                                           textvariable=self.backend_mode)
         self.combo_backend.pack(fill=tk.X)
         self.combo_backend.bind("<<ComboboxSelected>>", self.change_backend)
 
-        ttk.Label(side, text="Urzadzenie NI:").pack(anchor=tk.W)
-        self.ent_device = ttk.Entry(side)
-        self.ent_device.insert(0, "Dev1")
-        self.ent_device.pack(fill=tk.X)
-
-        ttk.Label(side, text="Kanal AI:").pack(anchor=tk.W)
-        self.ent_ai_channel = ttk.Entry(side)
-        self.ent_ai_channel.insert(0, "ai0")
-        self.ent_ai_channel.pack(fill=tk.X)
-
-        ttk.Label(side, text="Linia DI:").pack(anchor=tk.W)
-        self.ent_di_line = ttk.Entry(side)
-        self.ent_di_line.insert(0, "port0/line0")
-        self.ent_di_line.pack(fill=tk.X)
-
-        ttk.Label(side, text="Kanal AO:").pack(anchor=tk.W)
-        self.ent_ao_channel = ttk.Entry(side)
-        self.ent_ao_channel.insert(0, "ao0")
-        self.ent_ao_channel.pack(fill=tk.X)
+        ttk.Label(side, text="Port ESP32:").pack(anchor=tk.W)
+        self.ent_esp_port = ttk.Entry(side)
+        self.ent_esp_port.insert(0, "COM7")
+        self.ent_esp_port.pack(fill=tk.X)
 
         ttk.Separator(side).pack(fill=tk.X, pady=8)
 
@@ -220,33 +204,46 @@ class MainApp:
     def change_backend(self, _event=None):
         if self.daq.is_running or self.gen.is_running:
             messagebox.showwarning("Zmiana trybu DAQ", "Zatrzymaj akwizycje i generacje AO przed zmiana trybu.")
-            self.backend_mode.set("NI myDAQ" if isinstance(self.daq, NIDaqAcquisition) else "Symulacja")
+            if isinstance(self.daq, ESP32JoystickAcquisition):
+                self.backend_mode.set("ESP32 joystick")
+            else:
+                self.backend_mode.set("Symulacja")
             return
 
         self.daq.stop()
         self.gen.stop()
         self.daq = self._create_acquisition_backend()
         self.gen = self._create_generation_backend()
+        self._apply_backend_defaults()
         self.clear_plot()
         self.lbl_backend.config(text=f"Backend: {self.backend_mode.get()}")
 
     def _create_acquisition_backend(self):
-        if self.backend_mode.get() == "NI myDAQ":
-            device = self.ent_device.get().strip() or "Dev1"
-            ai_channel = self.ent_ai_channel.get().strip() or "ai0"
-            di_line = self.ent_di_line.get().strip()
-            return NIDaqAcquisition(device_name=device, ai_channel=ai_channel, di_line=di_line)
+        if self.backend_mode.get() == "ESP32 joystick":
+            port = self.ent_esp_port.get().strip() or "COM7"
+            return ESP32JoystickAcquisition(port=port)
         return AnalogAcquisition()
 
     def _create_generation_backend(self):
-        if self.backend_mode.get() == "NI myDAQ":
-            device = self.ent_device.get().strip() or "Dev1"
-            ao_channel = self.ent_ao_channel.get().strip() or "ao0"
-            return NIDaqGeneration(device_name=device, ao_channel=ao_channel)
         return AnalogGeneration()
+
+    def _apply_backend_defaults(self):
+        if self.backend_mode.get() != "ESP32 joystick":
+            return
+        self._set_entry_text(self.ent_range_min, "0.0")
+        self._set_entry_text(self.ent_range_max, "3.3")
+        self._set_entry_text(self.ent_min, "0.0")
+        self._set_entry_text(self.ent_max, "3.3")
+        self._set_entry_text(self.ent_freq, "10")
+        self._set_entry_text(self.ent_amp, "1.0")
+
+    def _set_entry_text(self, entry, text):
+        entry.delete(0, tk.END)
+        entry.insert(0, text)
 
     def handle_start_daq(self):
         self.daq = self._create_acquisition_backend()
+        self.gen = self._create_generation_backend()
         self.lbl_backend.config(text=f"Backend: {self.backend_mode.get()}")
         try:
             self.daq.configure(
@@ -285,6 +282,8 @@ class MainApp:
         self._cancel_measure_jobs()
         if self.is_measuring:
             self._stop_meas(save=True, restart_auto=False)
+        if self.gen.is_running:
+            self.gen.stop()
         self.daq.stop()
         self._set_daq_stopped_ui()
 
@@ -366,12 +365,16 @@ class MainApp:
             return
 
         self._stop_meas(save=True, restart_auto=False)
+        if self.gen.is_running:
+            self.gen.stop()
         self.daq.stop()
         self._set_daq_stopped_ui()
 
     def _stop_manual_measurement(self):
         self._stop_meas(save=True, restart_auto=False)
         if not self.auto_mode.get():
+            if self.gen.is_running:
+                self.gen.stop()
             self.daq.stop()
             self._set_daq_stopped_ui()
 
@@ -414,7 +417,7 @@ class MainApp:
     def save_data(self):
         out_dir = Path(__file__).resolve().parent
         fname = out_dir / f"data_{datetime.datetime.now().strftime('%H%M%S')}.csv"
-        fieldnames = ["time_s", "ai_v", "di", "potentiometer", "proximity", "switch", "limit_ok"]
+        fieldnames = ["time_s", "ai_v", "ai1_v", "di", "di0", "di1", "potentiometer", "proximity", "switch", "limit_ok"]
         with fname.open("w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
@@ -468,7 +471,10 @@ class MainApp:
                 self.update_job = None
 
     def _update_status(self, sample):
-        self.lbl_ai.config(text=f"AI: {sample['ai_v']:.3f} V")
+        if "ai1_v" in sample:
+            self.lbl_ai.config(text=f"AI0: {sample['ai_v']:.3f} V, AI1: {sample['ai1_v']:.3f} V")
+        else:
+            self.lbl_ai.config(text=f"AI: {sample['ai_v']:.3f} V")
         self.lbl_di.config(text=f"DI: {sample['di']}")
         self.lbl_pot.config(text=f"Potencjometr: {sample['potentiometer'] * 100:.1f} %")
         self.lbl_prox.config(text=f"Czujnik zblizeniowy: {sample['proximity']}")
@@ -556,7 +562,10 @@ class MainApp:
                 amplitude = abs(float(self.ent_amp.get()))
             except ValueError:
                 amplitude = 5.0
-            if ao_shape == "PWM":
+            if self.backend_mode.get() == "ESP32 joystick":
+                lows.append(0.0)
+                highs.append(max(3.3, amplitude))
+            elif ao_shape == "PWM":
                 lows.append(0.0)
                 highs.append(amplitude)
             else:
@@ -601,8 +610,8 @@ class MainApp:
     def close(self):
         self.closing = True
         self._cancel_jobs()
-        self.daq.stop()
         self.gen.stop()
+        self.daq.stop()
         try:
             self.root.destroy()
         except tk.TclError:
