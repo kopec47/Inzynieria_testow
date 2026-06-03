@@ -20,6 +20,8 @@ class MainApp:
         self.root.report_callback_exception = self._handle_tk_exception
 
         self.backend_mode = tk.StringVar(value="Symulacja")
+        self.input_signal_mode = tk.StringVar(value="Potencjometr AI0")
+        self.plot_view_mode = tk.StringVar(value="DAQ")
         self.daq = AnalogAcquisition()
         self.gen = AnalogGeneration()
 
@@ -27,8 +29,11 @@ class MainApp:
         self.auto_mode = tk.BooleanVar(value=False)
         self.plot_data = []
         self.ao_plot_data = []
+        self.button_plot_data = []
         self.plot_time_data = []
         self.ao_time_data = []
+        self.button_time_data = []
+        self.plot_samples = []
         self.current_measure_data = []
         self.acquisition_sample_count = 0
         self.measure_stop_job = None
@@ -37,6 +42,7 @@ class MainApp:
         self.closing = False
 
         self._setup_ui()
+        self._sync_backend_controls()
         self.update_gui()
 
     def _handle_tk_exception(self, exc_type, exc_value, exc_tb):
@@ -92,6 +98,26 @@ class MainApp:
         self.ent_esp_port = ttk.Entry(side)
         self.ent_esp_port.insert(0, "COM7")
         self.ent_esp_port.pack(fill=tk.X)
+
+        ttk.Label(side, text="Sygnał DAQ:").pack(anchor=tk.W)
+        self.combo_input_signal = ttk.Combobox(
+            side,
+            values=["Potencjometr AI0", "Button DI1"],
+            state="readonly",
+            textvariable=self.input_signal_mode,
+        )
+        self.combo_input_signal.pack(fill=tk.X)
+        self.combo_input_signal.bind("<<ComboboxSelected>>", self.change_input_signal)
+
+        ttk.Label(side, text="Widok wykresu:").pack(anchor=tk.W)
+        self.combo_plot_view = ttk.Combobox(
+            side,
+            values=["DAQ", "AO"],
+            state="readonly",
+            textvariable=self.plot_view_mode,
+        )
+        self.combo_plot_view.pack(fill=tk.X)
+        self.combo_plot_view.bind("<<ComboboxSelected>>", self.change_plot_view)
 
         ttk.Separator(side).pack(fill=tk.X, pady=8)
 
@@ -159,9 +185,9 @@ class MainApp:
         ttk.Label(side, text="Wejscia testowe").pack(anchor=tk.W)
         self.lbl_pot = ttk.Label(side, text="Potencjometr: -- %")
         self.lbl_pot.pack(anchor=tk.W)
-        self.lbl_prox = ttk.Label(side, text="Czujnik zblizeniowy: --")
+        self.lbl_prox = ttk.Label(side, text="joystick: --")
         self.lbl_prox.pack(anchor=tk.W)
-        self.lbl_switch = ttk.Label(side, text="Przelacznik: --")
+        self.lbl_switch = ttk.Label(side, text="Button: --")
         self.lbl_switch.pack(anchor=tk.W)
 
         ttk.Separator(side).pack(fill=tk.X, pady=8)
@@ -190,14 +216,17 @@ class MainApp:
         ttk.Button(side, text="START GEN", command=self.start_gen).pack(fill=tk.X)
         ttk.Button(side, text="STOP GEN", command=self.stop_gen).pack(fill=tk.X)
 
-        self.fig, self.ax = plt.subplots(figsize=(6, 4))
+        self.fig, self.ax = plt.subplots(figsize=(7, 4.5))
         self.line, = self.ax.plot([], [], "b-", label="AI")
         self.ao_line, = self.ax.plot([], [], "r--", label="AO")
+        self.button_line, = self.ax.plot([], [], "g-", drawstyle="steps-post", label="Button - DI1")
+        self.button_line.set_visible(False)
+        self.ao_line.set_visible(False)
         self.ax.set_title("Brak aktywnego sygnalu")
         self.ax.set_xlabel("Czas [s]")
-        self.ax.set_ylabel("Napiecie [V]")
+        self.ax.set_ylabel("Sygnał [V]")
         self.ax.set_ylim(-10, 10)
-        self.ax.legend(loc="upper right")
+        self.fig.tight_layout()
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.root)
         self.canvas.get_tk_widget().pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
@@ -218,6 +247,13 @@ class MainApp:
         self.clear_plot()
         self.lbl_backend.config(text=f"Backend: {self.backend_mode.get()}")
 
+    def change_input_signal(self, _event=None):
+        self._refresh_main_plot_data()
+        self._update_plot_description()
+
+    def change_plot_view(self, _event=None):
+        self._update_plot_description()
+
     def _create_acquisition_backend(self):
         if self.backend_mode.get() == "ESP32 joystick":
             port = self.ent_esp_port.get().strip() or "COM7"
@@ -228,14 +264,30 @@ class MainApp:
         return AnalogGeneration()
 
     def _apply_backend_defaults(self):
-        if self.backend_mode.get() != "ESP32 joystick":
-            return
-        self._set_entry_text(self.ent_range_min, "0.0")
-        self._set_entry_text(self.ent_range_max, "3.3")
-        self._set_entry_text(self.ent_min, "0.0")
-        self._set_entry_text(self.ent_max, "3.3")
-        self._set_entry_text(self.ent_freq, "10")
-        self._set_entry_text(self.ent_amp, "1.0")
+        if self.backend_mode.get() == "ESP32 joystick":
+            self._set_entry_text(self.ent_range_min, "0.0")
+            self._set_entry_text(self.ent_range_max, "3.3")
+            self._set_entry_text(self.ent_min, "0.0")
+            self._set_entry_text(self.ent_max, "3.3")
+            self._set_entry_text(self.ent_freq, "10")
+            self._set_entry_text(self.ent_amp, "1.0")
+        else:
+            self.input_signal_mode.set("Potencjometr AI0")
+            self._set_entry_text(self.ent_range_min, "-10.0")
+            self._set_entry_text(self.ent_range_max, "10.0")
+            self._set_entry_text(self.ent_min, "-4.0")
+            self._set_entry_text(self.ent_max, "4.0")
+            self._set_entry_text(self.ent_freq, "100")
+            self._set_entry_text(self.ent_amp, "5")
+        self._sync_backend_controls()
+
+    def _sync_backend_controls(self):
+        if self.backend_mode.get() == "ESP32 joystick":
+            self.ent_esp_port.config(state=tk.NORMAL)
+            self.combo_input_signal.config(state="readonly")
+        else:
+            self.ent_esp_port.config(state=tk.DISABLED)
+            self.combo_input_signal.config(state=tk.DISABLED)
 
     def _set_entry_text(self, entry, text):
         entry.delete(0, tk.END)
@@ -258,8 +310,11 @@ class MainApp:
 
         self.plot_data.clear()
         self.ao_plot_data.clear()
+        self.button_plot_data.clear()
+        self.plot_samples.clear()
         self.plot_time_data.clear()
         self.ao_time_data.clear()
+        self.button_time_data.clear()
         self.current_measure_data = []
         self.acquisition_sample_count = 0
         self.lbl_acq_samples.config(text="Probki akwizycji: 0")
@@ -290,10 +345,14 @@ class MainApp:
     def clear_plot(self):
         self.plot_data.clear()
         self.ao_plot_data.clear()
+        self.button_plot_data.clear()
+        self.plot_samples.clear()
         self.plot_time_data.clear()
         self.ao_time_data.clear()
+        self.button_time_data.clear()
         self.line.set_data([], [])
         self.ao_line.set_data([], [])
+        self.button_line.set_data([], [])
         self.ax.set_xlim(0, 10)
         self._update_plot_description()
         self.canvas.draw_idle()
@@ -417,11 +476,28 @@ class MainApp:
     def save_data(self):
         out_dir = Path(__file__).resolve().parent
         fname = out_dir / f"data_{datetime.datetime.now().strftime('%H%M%S')}.csv"
-        fieldnames = ["time_s", "ai_v", "ai1_v", "di", "di0", "di1", "potentiometer", "proximity", "switch", "limit_ok"]
+        fieldnames = [
+            "time_s", "ai_v", "ai1_v", "selected_signal_v", "di", "di0", "di1",
+            "potentiometer", "proximity", "switch", "limit_ok"
+        ]
+        try:
+            limit_min = float(self.ent_min.get())
+            limit_max = float(self.ent_max.get())
+        except ValueError:
+            limit_min = float("-inf")
+            limit_max = float("inf")
+
+        rows = []
+        for sample in self.current_measure_data:
+            row = dict(sample)
+            row["selected_signal_v"] = self._selected_signal_value(row)
+            row["limit_ok"] = limit_min <= row["selected_signal_v"] <= limit_max
+            rows.append(row)
+
         with fname.open("w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
-            writer.writerows(self.current_measure_data)
+            writer.writerows(rows)
         return fname
 
     def update_gui(self):
@@ -439,12 +515,16 @@ class MainApp:
                     limit_max = float("inf")
 
                 for sample in samples:
-                    sample["limit_ok"] = limit_min <= sample["ai_v"] <= limit_max
+                    sample["selected_signal_v"] = self._selected_signal_value(sample)
+                    sample["limit_ok"] = limit_min <= sample["selected_signal_v"] <= limit_max
 
                 self.acquisition_sample_count += len(samples)
                 self.lbl_acq_samples.config(text=f"Probki akwizycji: {self.acquisition_sample_count}")
+                self.plot_samples.extend(samples)
                 self.plot_time_data.extend(sample["time_s"] for sample in samples)
-                self.plot_data.extend(sample["ai_v"] for sample in samples)
+                self.plot_data.extend(sample["selected_signal_v"] for sample in samples)
+                self.button_time_data.extend(sample["time_s"] for sample in samples)
+                self.button_plot_data.extend(self._digital_plot_value(sample.get("switch", 0)) for sample in samples)
                 if self.is_measuring:
                     self.current_measure_data.extend(samples)
                     self.lbl_samples.config(text=f"Probki pomiaru: {len(self.current_measure_data)}")
@@ -466,7 +546,7 @@ class MainApp:
 
         if not self.closing:
             try:
-                self.update_job = self.root.after(100, self.update_gui)
+                self.update_job = self.root.after(30, self.update_gui)
             except tk.TclError:
                 self.update_job = None
 
@@ -477,8 +557,8 @@ class MainApp:
             self.lbl_ai.config(text=f"AI: {sample['ai_v']:.3f} V")
         self.lbl_di.config(text=f"DI: {sample['di']}")
         self.lbl_pot.config(text=f"Potencjometr: {sample['potentiometer'] * 100:.1f} %")
-        self.lbl_prox.config(text=f"Czujnik zblizeniowy: {sample['proximity']}")
-        self.lbl_switch.config(text=f"Przelacznik: {sample['switch']}")
+        self.lbl_prox.config(text=f"Joystick: {sample['proximity']}")
+        self.lbl_switch.config(text=f"Button: {sample['switch']}")
 
         if self.is_measuring:
             if sample["limit_ok"]:
@@ -489,14 +569,15 @@ class MainApp:
     def _update_plot(self):
         self.line.set_data(self.plot_time_data, self.plot_data)
         self.ao_line.set_data(self.ao_time_data, self.ao_plot_data)
+        self.button_line.set_data(self.button_time_data, self.button_plot_data)
         self._update_plot_x_range()
         self.canvas.draw_idle()
 
     def _update_plot_x_range(self):
         latest_times = []
-        if self.plot_time_data:
+        if self.plot_view_mode.get() == "DAQ" and self.plot_time_data:
             latest_times.append(self.plot_time_data[-1])
-        if self.ao_time_data:
+        if self.plot_view_mode.get() == "AO" and self.ao_time_data:
             latest_times.append(self.ao_time_data[-1])
 
         if not latest_times:
@@ -511,82 +592,104 @@ class MainApp:
         show_ai = self.daq.is_running or bool(self.plot_data)
         show_ao = self.gen.is_running or bool(self.ao_plot_data)
         ao_shape = self.combo_gen.get()
+        selected_label = self._selected_signal_label()
+        show_daq_view = self.plot_view_mode.get() == "DAQ"
+        show_ao_view = self.plot_view_mode.get() == "AO"
 
-        self.line.set_label("AI - akwizycja")
+        self.line.set_label(selected_label)
         self.ao_line.set_label(f"AO - {ao_shape}")
-        self.line.set_visible(show_ai)
-        self.ao_line.set_visible(show_ao)
+        self.line.set_visible(show_daq_view and show_ai)
+        self.ao_line.set_visible(show_ao_view and show_ao)
+        self.button_line.set_visible(False)
 
-        if show_ai and show_ao:
-            self.ax.set_title("Akwizycja AI i generacja AO")
-            self.ax.set_xlabel("Czas [s]")
-        elif show_ai:
-            self.ax.set_title("Akwizycja wejscia analogowego AI")
-            self.ax.set_xlabel("Czas [s]")
-        elif show_ao:
-            self.ax.set_title(f"Generacja wyjscia analogowego AO: {ao_shape}")
-            self.ax.set_xlabel("Czas [s]")
+        if show_daq_view:
+            self.ax.set_title(f"DAQ - {selected_label}" if show_ai else "DAQ - brak aktywnego sygnalu")
+            self.ax.set_ylabel("Sygnal DAQ [V]")
         else:
-            self.ax.set_title("Brak aktywnego sygnalu")
-            self.ax.set_xlabel("Czas [s]")
+            self.ax.set_title(f"AO/PWM - generacja {ao_shape}" if show_ao else "AO/PWM - brak aktywnego sygnalu")
+            self.ax.set_ylabel("AO [V]")
 
-        self.ax.set_ylabel("Napiecie [V]")
-        self._update_plot_y_range(show_ai, show_ao, ao_shape)
+        self.ax.set_ylabel("Sygnał [V]")
+        self.ax.set_ylabel("Sygnal DAQ [V]" if show_daq_view else "AO [V]")
+        self._update_plot_y_range(show_daq_view and show_ai, show_ao_view and show_ao, ao_shape)
         handles = []
-        if show_ai:
+        if show_daq_view and show_ai:
             handles.append(self.line)
-        if show_ao:
+        if show_ao_view and show_ao:
             handles.append(self.ao_line)
-        legend = self.ax.get_legend()
-        if handles:
-            self.ax.legend(handles=handles, loc="upper right")
-        elif legend is not None:
-            legend.remove()
+
+        self._set_axis_legend(self.ax, handles)
         self._update_plot_x_range()
+        self.fig.tight_layout()
         self.canvas.draw_idle()
 
     def _update_plot_y_range(self, show_ai, show_ao, ao_shape):
-        lows = []
-        highs = []
-
         if show_ai:
-            try:
-                lows.append(float(self.ent_range_min.get()))
-                highs.append(float(self.ent_range_max.get()))
-            except ValueError:
-                lows.append(-10.0)
-                highs.append(10.0)
+            ai_low, ai_high = self._selected_signal_range()
+            self._set_axis_y_range(self.ax, ai_low, ai_high)
+            return
 
         if show_ao:
             try:
                 amplitude = abs(float(self.ent_amp.get()))
             except ValueError:
                 amplitude = 5.0
-            if self.backend_mode.get() == "ESP32 joystick":
-                lows.append(0.0)
-                highs.append(max(3.3, amplitude))
-            elif ao_shape == "PWM":
-                lows.append(0.0)
-                highs.append(amplitude)
+            if ao_shape == "PWM":
+                self._set_axis_y_range(self.ax, 0.0, amplitude)
             else:
-                lows.append(-amplitude)
-                highs.append(amplitude)
+                self._set_axis_y_range(self.ax, -amplitude, amplitude)
+            return
 
-        if not lows:
-            lows.append(-10.0)
-            highs.append(10.0)
+        self._set_axis_y_range(self.ax, -10.0, 10.0)
 
-        low = min(lows)
-        high = max(highs)
+    def _set_axis_y_range(self, axis, low, high):
         if low == high:
             low -= 1.0
             high += 1.0
         padding = max(0.5, (high - low) * 0.05)
-        self.ax.set_ylim(low - padding, high + padding)
+        axis.set_ylim(low - padding, high + padding)
 
     def _apply_axis_range(self):
         self._update_plot_description()
         self.canvas.draw_idle()
+
+    def _selected_signal_value(self, sample):
+        if self.input_signal_mode.get() == "Button DI1":
+            return self._digital_plot_value(sample.get("switch", 0))
+        return sample["ai_v"]
+
+    def _selected_signal_label(self):
+        if self.input_signal_mode.get() == "Button DI1":
+            return "Button DI1"
+        return "Potencjometr AI0"
+
+    def _selected_signal_range(self):
+        if self.input_signal_mode.get() == "Button DI1":
+            return 0.0, self._digital_high_value()
+        try:
+            return float(self.ent_range_min.get()), float(self.ent_range_max.get())
+        except ValueError:
+            return -10.0, 10.0
+
+    def _refresh_main_plot_data(self):
+        self.plot_data = [self._selected_signal_value(sample) for sample in self.plot_samples]
+        self.line.set_data(self.plot_time_data, self.plot_data)
+
+    def _set_axis_legend(self, axis, handles):
+        legend = axis.get_legend()
+        if handles:
+            axis.legend(handles=handles, loc="upper right")
+        elif legend is not None:
+            legend.remove()
+
+    def _digital_high_value(self):
+        try:
+            return max(1.0, float(self.ent_range_max.get()))
+        except ValueError:
+            return 3.3
+
+    def _digital_plot_value(self, value):
+        return self._digital_high_value() if int(value) else 0.0
 
     def _cancel_jobs(self):
         self._cancel_measure_jobs()
