@@ -4,9 +4,9 @@ import time
 
 
 class AnalogGeneration:
-    """Continuous simulated analog output generation."""
 
     def __init__(self, channel="AO0"):
+        # Parametry i stan symulowanego wyjscia analogowego.
         self.channel = channel
         self.is_running = False
         self.thread = None
@@ -19,15 +19,18 @@ class AnalogGeneration:
         self._start_time = None
 
     def set_sine(self, amplitude, frequency):
+        # Ustawia parametry sygnalu sinusoidalnego.
         with self.lock:
             self.shape = "sinusoida"
             self.amplitude = float(amplitude)
             self.frequency = max(0.01, float(frequency))
 
     def set_sin(self, amplitude, frequency):
+        # Alias zostawiony dla zgodnosci nazewnictwa.
         self.set_sine(amplitude, frequency)
 
     def set_pwm(self, amplitude, duty_cycle, frequency=1.0):
+        # Ustawia parametry sygnalu PWM.
         with self.lock:
             self.shape = "PWM"
             self.amplitude = float(amplitude)
@@ -35,6 +38,7 @@ class AnalogGeneration:
             self.duty_cycle = max(0.0, min(100.0, float(duty_cycle)))
 
     def start(self):
+        # Uruchamia generacje w osobnym watku.
         if self.is_running:
             return
         self.is_running = True
@@ -43,6 +47,7 @@ class AnalogGeneration:
         self.thread.start()
 
     def stop(self):
+        # Zatrzymuje generacje i zeruje aktualna wartosc.
         self.is_running = False
         if self.thread is not None:
             self.thread.join(timeout=1.0)
@@ -52,10 +57,12 @@ class AnalogGeneration:
             self._start_time = None
 
     def get_value(self):
+        # Zwraca aktualnie wygenerowana wartosc sygnalu.
         with self.lock:
             return self.current_value
 
     def get_elapsed_time(self):
+        # Zwraca czas od startu generacji.
         with self.lock:
             start_time = self._start_time
         if start_time is None:
@@ -63,6 +70,7 @@ class AnalogGeneration:
         return time.monotonic() - start_time
 
     def _generation_loop(self):
+        # W tle obliczamy kolejne wartosci sinusoidy albo PWM.
         while self.is_running:
             t = self.get_elapsed_time()
             with self.lock:

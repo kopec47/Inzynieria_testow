@@ -15,6 +15,7 @@ from daq_acquisition_esp32 import ESP32JoystickAcquisition
 
 class MainApp:
     def __init__(self, root):
+        # Glowny stan aplikacji i domyslne tryby pracy.
         self.root = root
         self.root.title("System testowy DAQ")
         self.root.report_callback_exception = self._handle_tk_exception
@@ -46,6 +47,7 @@ class MainApp:
         self.update_gui()
 
     def _handle_tk_exception(self, exc_type, exc_value, exc_tb):
+        # Zapisuje bledy Tkintera do pliku, zeby latwiej bylo je diagnozowac.
         log_path = Path(__file__).resolve().parent / "daq_error.log"
         with log_path.open("a", encoding="utf-8") as f:
             f.write(f"\n[{datetime.datetime.now().isoformat(sep=' ', timespec='seconds')}]\n")
@@ -56,6 +58,7 @@ class MainApp:
             pass
 
     def _setup_ui(self):
+        # Buduje caly interfejs: panel sterowania i wykres.
         side_container = ttk.Frame(self.root)
         side_container.pack(side=tk.LEFT, fill=tk.Y)
 
@@ -231,6 +234,7 @@ class MainApp:
         self.canvas.get_tk_widget().pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
     def change_backend(self, _event=None):
+        # Zmiana z symulacji na ESP32 albo odwrotnie.
         if self.daq.is_running or self.gen.is_running:
             messagebox.showwarning("Zmiana trybu DAQ", "Zatrzymaj akwizycje i generacje AO przed zmiana trybu.")
             if isinstance(self.daq, ESP32JoystickAcquisition):
@@ -248,22 +252,27 @@ class MainApp:
         self.lbl_backend.config(text=f"Backend: {self.backend_mode.get()}")
 
     def change_input_signal(self, _event=None):
+        # Przelacza, ktory sygnal DAQ jest rysowany i oceniany limitami.
         self._refresh_main_plot_data()
         self._update_plot_description()
 
     def change_plot_view(self, _event=None):
+        # Przelacza widok wykresu pomiedzy DAQ i AO.
         self._update_plot_description()
 
     def _create_acquisition_backend(self):
+        # Tworzy odpowiedni obiekt akwizycji: symulacja albo ESP32.
         if self.backend_mode.get() == "ESP32 joystick":
             port = self.ent_esp_port.get().strip() or "COM7"
             return ESP32JoystickAcquisition(port=port)
         return AnalogAcquisition()
 
     def _create_generation_backend(self):
+        # Generacja AO jest symulowana programowo.
         return AnalogGeneration()
 
     def _apply_backend_defaults(self):
+        # Ustawia sensowne wartosci domyslne po zmianie trybu DAQ.
         if self.backend_mode.get() == "ESP32 joystick":
             self._set_entry_text(self.ent_range_min, "0.0")
             self._set_entry_text(self.ent_range_max, "3.3")
@@ -282,6 +291,7 @@ class MainApp:
         self._sync_backend_controls()
 
     def _sync_backend_controls(self):
+        # W symulacji pola zwiazane ze sprzetem ESP32 sa nieaktywne.
         if self.backend_mode.get() == "ESP32 joystick":
             self.ent_esp_port.config(state=tk.NORMAL)
             self.combo_input_signal.config(state="readonly")
@@ -290,10 +300,12 @@ class MainApp:
             self.combo_input_signal.config(state=tk.DISABLED)
 
     def _set_entry_text(self, entry, text):
+        # Pomocniczo podmienia tekst w polu Entry.
         entry.delete(0, tk.END)
         entry.insert(0, text)
 
     def handle_start_daq(self):
+        # Startuje akwizycje i przygotowuje wykres oraz liczniki.
         self.daq = self._create_acquisition_backend()
         self.gen = self._create_generation_backend()
         self.lbl_backend.config(text=f"Backend: {self.backend_mode.get()}")
@@ -334,6 +346,7 @@ class MainApp:
         self.lbl_auto.config(text="Tryb: auto" if self.auto_mode.get() else "Tryb: reczny")
 
     def handle_stop_daq(self):
+        # Zatrzymuje akwizycje oraz ewentualny trwajacy pomiar.
         self._cancel_measure_jobs()
         if self.is_measuring:
             self._stop_meas(save=True, restart_auto=False)
@@ -343,6 +356,7 @@ class MainApp:
         self._set_daq_stopped_ui()
 
     def clear_plot(self):
+        # Czysci dane widoczne na wykresie.
         self.plot_data.clear()
         self.ao_plot_data.clear()
         self.button_plot_data.clear()
@@ -358,6 +372,7 @@ class MainApp:
         self.canvas.draw_idle()
 
     def start_gen(self):
+        # Uruchamia symulowana generacje AO: sinusoida albo PWM.
         shape = self.combo_gen.get()
         try:
             amplitude = float(self.ent_amp.get())
@@ -395,10 +410,12 @@ class MainApp:
         self._update_plot_description()
 
     def stop_gen(self):
+        # Zatrzymuje generacje AO.
         self.gen.stop()
         self._update_plot_description()
 
     def toggle_meas(self):
+        # Rozpoczyna albo zatrzymuje okres oceniania pomiaru.
         if self.is_measuring:
             self._stop_manual_measurement()
             return
@@ -419,6 +436,7 @@ class MainApp:
         self.measure_stop_job = self.root.after(int(duration * 1000), self._finish_timed_measurement)
 
     def _finish_timed_measurement(self):
+        # Koniec pomiaru czasowego: zapis i ewentualny restart w trybie auto.
         if self.auto_mode.get():
             self._stop_meas(save=True, restart_auto=True)
             return
@@ -430,6 +448,7 @@ class MainApp:
         self._set_daq_stopped_ui()
 
     def _stop_manual_measurement(self):
+        # Reczne zatrzymanie pomiaru przyciskiem.
         self._stop_meas(save=True, restart_auto=False)
         if not self.auto_mode.get():
             if self.gen.is_running:
@@ -438,6 +457,7 @@ class MainApp:
             self._set_daq_stopped_ui()
 
     def _stop_meas(self, save, restart_auto=True):
+        # Wspolna logika konczenia pomiaru i zapisu danych.
         self.is_measuring = False
         self.btn_meas.config(text="START POMIARU")
         if self.measure_stop_job is not None:
@@ -466,6 +486,7 @@ class MainApp:
             self.lbl_auto.config(text="Tryb: auto" if self.auto_mode.get() else "Tryb: reczny")
 
     def _set_daq_stopped_ui(self):
+        # Przywraca stan przyciskow po zatrzymaniu akwizycji.
         self.btn_start_daq.config(state=tk.NORMAL)
         self.btn_stop_daq.config(state=tk.DISABLED)
         self.btn_meas.config(state=tk.DISABLED, text="START POMIARU")
@@ -474,6 +495,7 @@ class MainApp:
         self._update_plot_description()
 
     def save_data(self):
+        # Zapisuje aktualny pomiar do pliku CSV.
         out_dir = Path(__file__).resolve().parent
         fname = out_dir / f"data_{datetime.datetime.now().strftime('%H%M%S')}.csv"
         fieldnames = [
@@ -501,6 +523,7 @@ class MainApp:
         return fname
 
     def update_gui(self):
+        # Glowna petla odswiezania GUI: pobiera probki i aktualizuje wykres.
         if self.closing:
             return
 
@@ -551,6 +574,7 @@ class MainApp:
                 self.update_job = None
 
     def _update_status(self, sample):
+        # Aktualizuje etykiety z ostatnia odebrana probka.
         if "ai1_v" in sample:
             self.lbl_ai.config(text=f"AI0: {sample['ai_v']:.3f} V, AI1: {sample['ai1_v']:.3f} V")
         else:
@@ -567,6 +591,7 @@ class MainApp:
                 self.lbl_status.config(bg="red", text="STATUS: POZA LIMITEM")
 
     def _update_plot(self):
+        # Przekazuje dane do linii wykresu.
         self.line.set_data(self.plot_time_data, self.plot_data)
         self.ao_line.set_data(self.ao_time_data, self.ao_plot_data)
         self.button_line.set_data(self.button_time_data, self.button_plot_data)
@@ -574,6 +599,7 @@ class MainApp:
         self.canvas.draw_idle()
 
     def _update_plot_x_range(self):
+        # Dopasowuje zakres osi czasu do aktywnego widoku.
         latest_times = []
         if self.plot_view_mode.get() == "DAQ" and self.plot_time_data:
             latest_times.append(self.plot_time_data[-1])
@@ -589,6 +615,7 @@ class MainApp:
         self.ax.set_xlim(0, high + padding)
 
     def _update_plot_description(self):
+        # Ustawia tytul, osie, legendy i widoczne linie wykresu.
         show_ai = self.daq.is_running or bool(self.plot_data)
         show_ao = self.gen.is_running or bool(self.ao_plot_data)
         ao_shape = self.combo_gen.get()
@@ -624,6 +651,7 @@ class MainApp:
         self.canvas.draw_idle()
 
     def _update_plot_y_range(self, show_ai, show_ao, ao_shape):
+        # Dopasowuje zakres osi Y do widoku DAQ albo AO.
         if show_ai:
             ai_low, ai_high = self._selected_signal_range()
             self._set_axis_y_range(self.ax, ai_low, ai_high)
@@ -643,6 +671,7 @@ class MainApp:
         self._set_axis_y_range(self.ax, -10.0, 10.0)
 
     def _set_axis_y_range(self, axis, low, high):
+        # Ustawia zakres osi Y z lekkim marginesem.
         if low == high:
             low -= 1.0
             high += 1.0
@@ -650,20 +679,24 @@ class MainApp:
         axis.set_ylim(low - padding, high + padding)
 
     def _apply_axis_range(self):
+        # Odsiwieza opis i zakres wykresu po zmianie parametrow.
         self._update_plot_description()
         self.canvas.draw_idle()
 
     def _selected_signal_value(self, sample):
+        # Zwraca wartosc sygnalu wybranego w polu "Sygnal DAQ".
         if self.input_signal_mode.get() == "Button DI1":
             return self._digital_plot_value(sample.get("switch", 0))
         return sample["ai_v"]
 
     def _selected_signal_label(self):
+        # Etykieta wybranego sygnalu na wykresie.
         if self.input_signal_mode.get() == "Button DI1":
             return "Button DI1"
         return "Potencjometr AI0"
 
     def _selected_signal_range(self):
+        # Zakres osi Y dla wybranego sygnalu DAQ.
         if self.input_signal_mode.get() == "Button DI1":
             return 0.0, self._digital_high_value()
         try:
@@ -672,10 +705,12 @@ class MainApp:
             return -10.0, 10.0
 
     def _refresh_main_plot_data(self):
+        # Przelicza dane wykresu po zmianie wybranego sygnalu DAQ.
         self.plot_data = [self._selected_signal_value(sample) for sample in self.plot_samples]
         self.line.set_data(self.plot_time_data, self.plot_data)
 
     def _set_axis_legend(self, axis, handles):
+        # Pokazuje albo usuwa legende w zaleznosci od widocznych linii.
         legend = axis.get_legend()
         if handles:
             axis.legend(handles=handles, loc="upper right")
@@ -683,15 +718,18 @@ class MainApp:
             legend.remove()
 
     def _digital_high_value(self):
+        # Wartosc wysoka dla sygnalu cyfrowego rysowanego jako 0/Vmax.
         try:
             return max(1.0, float(self.ent_range_max.get()))
         except ValueError:
             return 3.3
 
     def _digital_plot_value(self, value):
+        # Zamienia stan cyfrowy 0/1 na wartosc do narysowania na wykresie.
         return self._digital_high_value() if int(value) else 0.0
 
     def _cancel_jobs(self):
+        # Anuluje zaplanowane zadania Tkintera przy zamykaniu aplikacji.
         self._cancel_measure_jobs()
         if self.update_job is not None:
             try:
@@ -701,6 +739,7 @@ class MainApp:
             self.update_job = None
 
     def _cancel_measure_jobs(self):
+        # Anuluje automatyczne konczenie lub restart pomiaru.
         for job in (self.measure_stop_job, self.auto_start_job):
             if job is not None:
                 try:
@@ -711,6 +750,7 @@ class MainApp:
         self.auto_start_job = None
 
     def close(self):
+        # Bezpiecznie zamyka program, watki i urzadzenia.
         self.closing = True
         self._cancel_jobs()
         self.gen.stop()

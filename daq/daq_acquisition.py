@@ -5,12 +5,14 @@ import time
 
 
 class AnalogAcquisition:
-    """Continuous simulated acquisition of analog and digital input samples."""
 
     def __init__(self, frequency=100, voltage_min=-10.0, voltage_max=10.0):
+        # Podstawowe parametry symulowanej akwizycji.
         self.frequency = frequency
         self.voltage_min = voltage_min
         self.voltage_max = voltage_max
+
+        # Bufor przechowuje probki wygenerowane w tle.
         self.buffer = []
         self.lock = threading.Lock()
         self.is_running = False
@@ -19,6 +21,7 @@ class AnalogAcquisition:
         self._start_time = None
 
     def configure(self, frequency=None, voltage_min=None, voltage_max=None):
+        # Ustawienia pobierane z GUI przed startem akwizycji.
         if frequency is not None:
             self.frequency = max(1, int(float(frequency)))
         if voltage_min is not None:
@@ -29,6 +32,7 @@ class AnalogAcquisition:
             raise ValueError("Minimalny zakres AI musi byc mniejszy od maksymalnego.")
 
     def start(self):
+        # Uruchamia symulacje w osobnym watku.
         if self.is_running:
             return
         self.is_running = True
@@ -38,12 +42,14 @@ class AnalogAcquisition:
         self.thread.start()
 
     def stop(self):
+        # Zatrzymuje watek symulacji.
         self.is_running = False
         if self.thread:
             self.thread.join(timeout=1.0)
             self.thread = None
 
     def _acquisition_loop(self):
+        # Co okolo 100 ms generujemy paczke probek do bufora.
         while self.is_running:
             loop_start = time.monotonic()
             samples_per_tick = max(1, round(self.frequency * 0.1))
@@ -55,6 +61,7 @@ class AnalogAcquisition:
             time.sleep(max(0.0, 0.1 - elapsed))
 
     def _build_sample(self):
+        # Tworzy pojedyncza probke analogowa i cyfrowa.
         timestamp = self._sample_index / self.frequency
         span = self.voltage_max - self.voltage_min
         center = self.voltage_min + span / 2.0
@@ -80,6 +87,7 @@ class AnalogAcquisition:
         return sample
 
     def get_samples(self):
+        # Zwraca probki do GUI i czysci bufor.
         with self.lock:
             samples = list(self.buffer)
             self.buffer.clear()
