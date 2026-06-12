@@ -16,35 +16,35 @@ from daq_acquisition_esp32 import ESP32JoystickAcquisition
 class MainApp:
     def __init__(self, root):
         # Glowny stan aplikacji i domyslne tryby pracy.
-        self.root = root
+        self.root = root # Tkinter root window przekazywany z main.py, gdzie jest tworzony.
         self.root.title("System testowy DAQ")
-        self.root.report_callback_exception = self._handle_tk_exception
+        self.root.report_callback_exception = self._handle_tk_exception # Przechwytuje bledy z Tkintera, zeby je logowac do pliku.
 
-        self.backend_mode = tk.StringVar(value="Symulacja")
+        self.backend_mode = tk.StringVar(value="Symulacja") # Domyslny backend to symulacja, ale mozna przełączyć na ESP32 joystick.
         self.input_signal_mode = tk.StringVar(value="Potencjometr AI0")
         self.plot_view_mode = tk.StringVar(value="DAQ")
         self.daq = AnalogAcquisition()
         self.gen = AnalogGeneration()
 
-        self.is_measuring = False
-        self.auto_mode = tk.BooleanVar(value=False)
-        self.plot_data = []
-        self.ao_plot_data = []
-        self.button_plot_data = []
-        self.plot_time_data = []
-        self.ao_time_data = []
-        self.button_time_data = []
-        self.plot_samples = []
-        self.current_measure_data = []
-        self.acquisition_sample_count = 0
-        self.measure_stop_job = None
-        self.auto_start_job = None
-        self.update_job = None
-        self.closing = False
+        self.is_measuring = False # Flaga informujaca, czy trwa aktywny pomiar (ocena limitow i zapisywanie danych).
+        self.auto_mode = tk.BooleanVar(value=False) # Tryb automatyczny: po zakonczeniu pomiaru od razu startuje kolejny po krotkiej przerwie. Przydatne do testowania stabilnosci i zbierania duzej ilosci danych.
+        self.plot_data = [] # Dane sygnalu do wykresu, aktualizowane na biezaco z probek akwizycji.
+        self.ao_plot_data = [] # Dane sygnalu AO do wykresu, aktualizowane na biezaco z generacji.
+        self.button_plot_data = [] # Dane stanu przycisku (DI1) do wykresu, rysowane jako sygnal cyfrowy.
+        self.plot_time_data = [] # Dane czasu do wykresu, wspolne dla sygnalu DAQ i stanu przycisku, aktualizowane z probek akwizycji.
+        self.ao_time_data = [] # Dane czasu do wykresu dla sygnalu AO, aktualizowane z generacji.
+        self.button_time_data = [] # Dane czasu do wykresu dla stanu przycisku, aktualizowane z probek akwizycji (to samo co plot_time_data, ale trzymane osobno dla przejrzystosci).
+        self.plot_samples = [] # Oryginalne probki akwizycji, trzymane w calosci do zapisu i oceny limitow, podczas gdy plot_data zawiera tylko wartosci sygnalu do rysowania.
+        self.current_measure_data = [] # Probki z aktualnie trwajacego pomiaru, zbierane osobno, zeby latwiej bylo je zapisac do pliku po zakonczeniu pomiaru.
+        self.acquisition_sample_count = 0 # Licznik wszystkich probek pobranych z akwizycji, uaktualniany na biezaco, niezaleznie od tego, czy trwa pomiar, zeby pokazac calkowita ilosc danych zebraną podczas sesji.
+        self.measure_stop_job = None # ID zadania w Tkinterze do automatycznego zatrzymania pomiaru po okreslonym czasie, uzywane tylko w trybie pomiaru czasowego.
+        self.auto_start_job = None # ID zadania w Tkinterze do automatycznego startu kolejnego pomiaru po przerwie, uzywane tylko w trybie automatycznym.
+        self.update_job = None # ID zadania w Tkinterze do odswiezania GUI, uzywane do anulowania odswiezania przy zamykaniu aplikacji.
+        self.closing = False # Flaga informujaca, ze aplikacja jest w trakcie zamykania, zeby zatrzymac petle odswiezania GUI i inne zadania.
 
-        self._setup_ui()
-        self._sync_backend_controls()
-        self.update_gui()
+        self._setup_ui() # Buduje interfejs uzytkownika i wykres.
+        self._sync_backend_controls() # Ustawia stan pol kontrolnych zgodnie z domyslnym backendem.
+        self.update_gui() # Uruchamia petle odswiezania GUI, ktora bedzie cyklicznie pobierac probki z akwizycji i aktualizowac wykres oraz liczniki.
 
     def _handle_tk_exception(self, exc_type, exc_value, exc_tb):
         # Zapisuje bledy Tkintera do pliku, zeby latwiej bylo je diagnozowac.
@@ -62,7 +62,7 @@ class MainApp:
         side_container = ttk.Frame(self.root)
         side_container.pack(side=tk.LEFT, fill=tk.Y)
 
-        side_canvas = tk.Canvas(side_container, width=210, highlightthickness=0)
+        side_canvas = tk.Canvas(side_container, width=210, highlightthickness=0) # Canvas do przewijania panelu bocznego, zeby zmiescic wiecej kontrolek.
         side_scrollbar = ttk.Scrollbar(side_container, orient=tk.VERTICAL, command=side_canvas.yview)
         side_canvas.configure(yscrollcommand=side_scrollbar.set)
         side_canvas.pack(side=tk.LEFT, fill=tk.Y, expand=True)
@@ -71,13 +71,13 @@ class MainApp:
         side = ttk.Frame(side_canvas, padding=10)
         side_window = side_canvas.create_window((0, 0), window=side, anchor=tk.NW)
 
-        def update_scroll_region(_event=None):
+        def update_scroll_region(_event=None): # Aktualizuje obszar przewijania canvasu, gdy zawartosc panelu bocznego sie zmienia.
             side_canvas.configure(scrollregion=side_canvas.bbox("all"))
 
-        def update_side_width(event):
+        def update_side_width(event): # Aktualizuje szerokosc okna z panelem bocznym, gdy rozmiar canvasu sie zmienia, zeby zawsze dopasowac szerokosc panelu do szerokosci canvasu.
             side_canvas.itemconfigure(side_window, width=event.width)
 
-        def on_mousewheel(event):
+        def on_mousewheel(event): # Obsluguje przewijanie panelu bocznego za pomoca kółka myszy, dziala na Windows i Linux (Button-4 i Button-5 to zdarzenia dla kółka myszy na Linuxie).
             if event.num == 4:
                 side_canvas.yview_scroll(-1, "units")
             elif event.num == 5:
@@ -109,9 +109,8 @@ class MainApp:
             state="readonly",
             textvariable=self.input_signal_mode,
         )
-        self.combo_input_signal.pack(fill=tk.X)
-        self.combo_input_signal.bind("<<ComboboxSelected>>", self.change_input_signal)
-
+        self.combo_input_signal.pack(fill=tk.X) # Wybór, który sygnał DAQ jest rysowany i oceniany limitami. Dostępny tylko w trybie symulacji, bo ESP32 joystick ma tylko potencjometr AI0 i przycisk DI1, a w trybie ESP32 zawsze rysujemy potencjometr AI0.
+        self.combo_input_signal.bind("<<ComboboxSelected>>", self.change_input_signal) # Przelacza, ktory sygnal DAQ jest rysowany i oceniany limitami. Dostepny tylko w trybie symulacji, bo ESP32 joystick ma tylko potencjometr AI0 i przycisk DI1, a w trybie ESP32 zawsze rysujemy potencjometr AI0.
         ttk.Label(side, text="Widok wykresu:").pack(anchor=tk.W)
         self.combo_plot_view = ttk.Combobox(
             side,
@@ -122,7 +121,7 @@ class MainApp:
         self.combo_plot_view.pack(fill=tk.X)
         self.combo_plot_view.bind("<<ComboboxSelected>>", self.change_plot_view)
 
-        ttk.Separator(side).pack(fill=tk.X, pady=8)
+        ttk.Separator(side).pack(fill=tk.X, pady=8) # Oddziela sekcje konfiguracji akwizycji od reszty panelu.
 
         ttk.Label(side, text="Limit MIN [V]:").pack(anchor=tk.W)
         self.ent_min = ttk.Entry(side)
